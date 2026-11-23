@@ -76,8 +76,10 @@ def cmd_modules(args):
     return 1 if bad else 0
 
 
-def _tree_at(ref, tree):
-    """The tree's modules as committed at `ref`, unpacked into a temporary directory."""
+def _tree_at(ref, tree, full=False):
+    """The tree's modules as committed at `ref`, unpacked into a temporary directory: each
+    top-level module's module.ini / module.toml for a plan, every file but tests/ when `full`
+    (an apply's receipts fingerprint the module directories as committed)."""
     import io
     import subprocess
     import tarfile
@@ -86,11 +88,15 @@ def _tree_at(ref, tree):
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if p.returncode != 0:
         raise ValueError("--to %s: %s" % (ref, p.stderr.decode("utf-8", "replace").strip()))
-    tmp = tempfile.mkdtemp(prefix="hasta-plan-")
+    tmp = tempfile.mkdtemp(prefix="hasta-tree-")
     with tarfile.open(fileobj=io.BytesIO(p.stdout)) as tar:
         # a plan reads only each top-level module's module.ini / module.toml: plain files
-        wanted = [m for m in tar.getmembers() if m.isfile() and m.name.count("/") == 1
-                  and m.name.split("/")[1] in ("module.ini", "module.toml")]
+        if full:
+            wanted = [m for m in tar.getmembers()
+                      if m.name != "tests" and not m.name.startswith("tests/")]
+        else:
+            wanted = [m for m in tar.getmembers() if m.isfile() and m.name.count("/") == 1
+                      and m.name.split("/")[1] in ("module.ini", "module.toml")]
         if hasattr(tarfile, "data_filter"):  # 3.12+, and the 3.7-3.11 security backports
             tar.extractall(tmp, members=wanted, filter="data")
         else:
@@ -137,6 +143,26 @@ def cmd_plan(args):
 
 def cmd_apply(args):
     root = args.root
+    if args.to:
+        # The installer links bins and units into the tree it runs from: a tree unpacked from
+        # REF would leave the box linked into a directory that is gone. Moving the box to REF
+        # is rastaos-update's (it checks REF out, then converge applies) until the release
+        # directories (proposal §7); here REF is read, never applied.
+        if not args.dry_run or args.resume:
+            print("hasta apply: --to %s: only with --dry-run (and not --resume): moving the box"
+                  " to a release is `rastaos-update <tag>`'s" % args.to, file=sys.stderr)
+            return 2
+        try:
+            tmp = _tree_at(args.to, os.path.abspath(args.tree), full=True)
+        except ValueError as exc:
+            print("hasta apply: %s" % exc, file=sys.stderr)
+            return 2
+        try:
+            args.tree, args.to = tmp, None
+            return cmd_apply(args)
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
     if args.resume:
         req = apply_mod.pending(root)
         if req is None:
@@ -306,6 +332,9 @@ def parser():
                     help="an app tree carrying its own module.ini (repeatable)")
     sp.add_argument("--platform", choices=("pi", "x86"),
                     help="override the platform the facts give")
+    sp.add_argument("--to", metavar="REF",
+                    help="with --dry-run: what would run towards the tree as committed at REF"
+                    " (git archive, nothing checked out)")
     sp.add_argument("--dry-run", action="store_true", help="say what would run, change nothing")
     sp.add_argument("--force", action="store_true",
                     help="run every module again, even those whose receipt is current")

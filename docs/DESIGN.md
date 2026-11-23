@@ -179,13 +179,18 @@ facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_pla
 `setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
 same decision for every module.
 
-### `hasta apply [--dry-run] [--force] [--resume] [--tree DIR] [--receipts FILE | --modules LIST] [--app DIR]`
+### `hasta apply [--dry-run [--to REF]] [--force] [--resume] [--tree DIR] [--receipts FILE | --modules LIST] [--app DIR]`
 
 Runs `hasta plan`'s rows by the code paths `setup/converge.py` takes today: `upgrade` runs the
 module's `[install] upgrade` script with `--converging`, `script` and `install` run
 `setup/installer.py`'s `install_module`, `linked` runs nothing, `held`, `skip` and `unrecorded`
 run nothing; one daemon-reload at the end. It applies to the running box only (a chroot or a
-container for tests); `--root` is accepted with `--dry-run` alone.
+container for tests); `--root` is accepted with `--dry-run` alone. `--to REF --dry-run` says
+what would run towards the tree as committed at REF (`git archive`, every file but `tests/`, so
+the receipts' fingerprints are REF's; nothing checked out). Without `--dry-run`, `--to` is
+refused: the installer links bins and units into the tree it runs from, and a tree unpacked from
+REF is a directory that goes away. Moving a box to a release stays `rastaos-update <tag>`'s (it
+checks the tag out, then `converge.py` applies) until the release directories (proposal §7).
 
 Receipts: one file per module under `/etc/hasta/receipts/<module>`, `KEY=value` lines — `MODULE`,
 `FINGERPRINT` (`setup/module-manifest`'s content hash, computed the same way in

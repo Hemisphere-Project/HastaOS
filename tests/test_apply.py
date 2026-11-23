@@ -193,6 +193,32 @@ class Apply(unittest.TestCase):
         code, obj, err = self.cli("--root", self.box, "--resume")
         self.assertEqual((code, obj["resumed"]), (0, False), err)
 
+    def test_to_ref_reads_the_tree_as_committed_and_applies_only_dry(self):
+        def git(*a):
+            subprocess.run(["git", "-C", self.tree, "-c", "user.name=t", "-c", "user.email=t@t"]
+                           + list(a), check=True, stdout=subprocess.DEVNULL)
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-qm", "one")
+        self.assertEqual(self.apply(FakeRunner(self.box)).failed, [])
+        write(os.path.join(self.tree, "beta", "upgrade.sh"), "#!/bin/sh\necho two\n")
+        git("commit", "-qam", "two")
+        os.remove(os.path.join(self.tree, "beta", "upgrade.sh"))   # the working tree is not read
+        args = ("--root", self.box, "--tree", self.tree, "--platform", "pi",
+                "--receipts", self.receipts, "--dry-run")
+        before = self.snapshot()
+        for ref, runs in (("HEAD~1", []), ("HEAD", ["beta"])):
+            code, obj, err = self.cli(*(args + ("--to", ref)))
+            self.assertEqual(code, 0, err)
+            self.assertEqual([s["module"] for s in obj["steps"] if s["outcome"] == "would-run"],
+                             runs, ref)
+        code, _, err = self.cli("--root", self.box, "--tree", self.tree, "--to", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("only with --dry-run", err)
+        code, _, err = self.cli(*(args + ("--to", "no-such-ref")))
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.snapshot(), before)
+
 
 class Fingerprint(unittest.TestCase):
     """The receipts' fingerprint is setup/module-manifest's, byte for byte."""
