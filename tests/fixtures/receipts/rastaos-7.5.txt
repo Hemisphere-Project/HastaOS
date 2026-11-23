@@ -1,0 +1,16 @@
+# Pi-tools module manifest — one line per module, rewritten by its own install pass.
+# <module> <fingerprint> <installed-at> <source>  ·  read it with bench/module-level
+audiohub ab1769b90d72 2026-11-20T10:00:00+01:00 1c927c4
+blackbox 00dcdea270a3 2026-11-20T10:00:00+01:00 1c927c4
+extendfs 2a93f8dbf2e6 2026-11-20T10:00:00+01:00 1c927c4
+flightbox 2010653edc7a 2026-11-20T10:00:00+01:00 1c927c4
+hdmi-rehandshake 5bf5b16cd73a 2026-11-20T10:00:00+01:00 1c927c4
+hostrename da51109fd1af 2026-11-20T10:00:00+01:00 1c927c4
+linkwatch ceb11aaf43e5 2026-11-20T10:00:00+01:00 1c927c4
+network-tools 29eb4c77f523 2026-11-20T10:00:00+01:00 1c927c4
+rorw 2c6ff75ba27b 2026-11-20T10:00:00+01:00 1c927c4
+splash c8c0e82daacc 2026-11-20T10:00:00+01:00 1c927c4
+starter 32f97b2babc8 2026-11-20T10:00:00+01:00 1c927c4
+tailscale 108f72437275 2026-11-20T10:00:00+01:00 1c927c4
+usbautomount 2d7c81a3f74d 2026-11-20T10:00:00+01:00 1c927c4
+usbfix 840e195a1a28 2026-11-20T10:00:00+01:00 1c927c4

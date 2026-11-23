@@ -145,6 +145,39 @@ it when the engine starts applying.
 Every `module.toml` under the tree (default: this checkout; `tests/` and `hasta/` are skipped),
 valid or not, and why not; and how many legacy `module.ini` the tree holds.
 
+### The legacy driver (`hasta/legacy.py`)
+
+Reads a `module.ini` — every key `setup/installer.py` and `setup/converge.py` honour: `[module]`
+name, description, group, platforms; `[install]` script, rerun, upgrade; `[deps]` apt; `[files]`
+bins, services, timers, dirs, npm, udev_rules, enable, mask; `[starter]` comment, service — into
+the manifest model, which `manifest.validate` accepts: bins and udev rules become `links`, units
+take their state (`enable` → enabled, `mask` → masked, else disabled: the starter starts them),
+`platforms` becomes `supports.machine` (`pi` → `rpi*`, `x86` → `x86*`), and what the `.ini` cannot
+say (an `install.sh`, directories, npm, the starter entry) goes to `undeclared`. A key no installer
+reads is reported. Where a `module.toml` sits beside the `.ini` the two are joined: the `.toml` is
+what the module leaves on a box, the `.ini` stays how it is installed today. Discovery is
+converge's — the tree's top-level module directories — plus app trees given by path (`--app`).
+Layer: the `.toml`'s, else `core` for the `core` group, `app` for an app tree, `feature` otherwise.
+
+### `hasta plan [--root DIR] [--to REF] [--receipts FILE | --modules LIST] [--app DIR]`
+
+The actions that move the box from its receipts to this tree; changes nothing. The module set is
+the box's receipts (`ROOT/etc/pi-tools-modules.txt`, written by `setup/module-manifest`) plus every
+module with a declared bin or unit on the box — converge's set — or a list given with `--modules`.
+`--to REF` plans towards the tree as committed at REF (`git archive`, nothing checked out).
+Resolve checks `supports`, `requires` / `provides` and `claims`, and two modules on one box path
+(a conflict between legacy modules that declare nothing): each is a problem, reported, never
+enforced, and the exit is 1. Order: layer, then what a module requires, then name.
+
+Each module lands in converge's classes, by converge's rules: `upgrade` (a script module with an
+`[install] upgrade` script, run `--converging`), `script` (`rerun = yes`: install.sh again),
+`held` (neither: not run), `install` (a standard module with a declared file missing), `linked`
+(every declared bin and unit present: the symlinks carry the new code); plus `skip` (not for this
+platform) and `unrecorded` (a script module with no receipt and no trace). The platform is the
+facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_plan.py` runs
+`setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
+same decision for every module.
+
 ## 7. The manifest — `module.toml`, schema 1
 
 Read with `tomllib` where it exists (3.11+) and with the vendored `hasta/_vendor/tomli.py` (tomli
@@ -195,4 +228,6 @@ after a table header inside that table, and the validator then reports it as unk
 `python3` and again under a 3.7 interpreter when one is at hand; verify prints which it used.
 Fixtures are small text trees with no key and no identity in them: `tests/fixtures/roots/` (a Pi 3
 on Buster, a Pi 4 with `/boot/firmware`, an x86 box with an ESP, a Rasta card in a reader) and
-`tests/fixtures/modules/` (a manifest using every key, and a broken one).
+`tests/fixtures/modules/` (a manifest using every key, and a broken one), and
+`tests/fixtures/receipts/rastaos-7.5.txt` (module receipts as `setup/module-manifest` writes them,
+fingerprinted at the rastaos-7.5 commit `1c927c4`).
