@@ -178,7 +178,7 @@ facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_pla
 `setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
 same decision for every module.
 
-### `hasta check [--root DIR [--boot DIR] [--data DIR]] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
+### `hasta check [--root DIR [--boot DIR] [--data DIR] | --image FILE] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
 
 What the manifests declare against what the box holds; changes nothing. Exit 0 clean, 1 drift,
 2 usage or not a box (no `/etc/systemd/system` under the root). Three parts:
@@ -213,6 +213,22 @@ root. Every read goes through one mount map (`facts.Root`): the FAT is read at t
 root's `/etc/fstab` mounts it (its `vfat` line; else `/boot/firmware` when the root has it, else
 `/boot`), the data partition at `/data`. Facts, plan and check then see one tree, and the report
 is the one `check` gives on the same tree joined (`tests/test_check_offline.py`).
+
+`--image FILE` checks an image file (`hasta/image.py`). Its partitions come from the MBR or GPT
+table (a file holding one bare filesystem is its own root) and get a role by filesystem and
+label: the FAT is the boot partition, the ext one labelled `data`/`DATA` the data partition, the
+root the ext one labelled `rootfs` (else the first other ext). As root each is loop-mounted
+read-only (ext with `noload`: no journal replayed into the file). Otherwise the ext partitions
+are read through `debugfs` (`rdump`) into a temporary directory — the root's `/etc` whole, the
+dpkg status, `/usr/lib/os-release`, and every path a manifest of the tree declares or the legacy
+driver probes (`check.declared_paths`), not the whole partition — and the FAT through `mtools`
+when it is installed; without mtools the boot partition is not read and the report says so in a
+`notice` line. The partitions then go through the same mount map as `--boot`/`--data`, the
+temporary directory is removed, and the report names the image as its root, with an `image`
+object (partitions, `read: mounted|extracted`, notices) in `--json`. The test builds a card
+image without root (sfdisk on a plain file, `mkfs.vfat --offset` + `mcopy`, `mke2fs -d -E
+offset=`) from the rc box and requires the report `check --root` gives on the same tree. The
+mounted path (run as root) is not exercised by `bench/verify`.
 
 ## 7. The manifest — `module.toml`, schema 1
 

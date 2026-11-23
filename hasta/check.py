@@ -467,6 +467,21 @@ def check_receipts(tree, root, receipts_path, modules, on_box):
     return out
 
 
+def declared_paths(tree, apps=()):
+    """Every box path a check of this tree may read beyond /etc: each manifest's files and links
+    (any stack's too) and what the legacy driver probes (bins, units). `--image` without root
+    extracts these, not the whole partition."""
+    out = set()
+    for m in legacy.discover(tree, apps).values():
+        out.update(m.declared())
+    for m in manifest.discover(tree):
+        if m.valid:
+            d = Decl(m.id, os.path.dirname(m.path), m.data, m.data["module"]["layer"])
+            out.update(f["path"] for f in d.files)
+            out.update(l["path"] for l in d.links)
+    return sorted(p for p in out if p.startswith("/"))
+
+
 def make(tree, root="/", receipts_path=None, select=None, platform=None, apps=(),
          only=None):
     """The check of the box at `root` against the modules of `tree`. Raises ValueError when

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 
 from hasta import SCHEMA_VERSION, __version__
@@ -138,14 +139,40 @@ def cmd_check(args):
         if d and not os.path.isdir(d):
             print("hasta check: %s %s: not a directory" % (flag, d), file=sys.stderr)
             return 2
-    root = facts_mod.mounted(args.root, boot=args.boot, data=args.data)
+    tree = os.path.abspath(args.tree)
+    opened = None
+    if args.image:
+        if args.root != "/" or args.boot or args.data:
+            print("hasta check: --image reads its own root, boot and data", file=sys.stderr)
+            return 2
+        if not os.path.isfile(args.image):
+            print("hasta check: --image %s: not a file" % args.image, file=sys.stderr)
+            return 2
+        from hasta import image as image_mod
+        try:
+            opened = image_mod.Opened(args.image, check_mod.declared_paths(tree, args.app or ()))
+        except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+            print("hasta check: %s" % exc, file=sys.stderr)
+            return 2
+        root = opened.root
+    else:
+        root = facts_mod.mounted(args.root, boot=args.boot, data=args.data)
     try:
-        r = check_mod.make(os.path.abspath(args.tree), root, receipts_path=args.receipts,
+        r = check_mod.make(tree, root, receipts_path=args.receipts,
                            apps=args.app or (), platform=args.platform, only=args.module)
     except ValueError as exc:
         print("hasta check: %s" % exc, file=sys.stderr)
         return 2
+    finally:
+        if opened is not None:
+            opened.close()
     lines = []
+    if opened is not None:
+        for p in opened.parts:
+            lines.append("partition   p%-3d %-6s %-10s %s" % (p.number, p.fs or "?",
+                                                            p.label or "-", p.role or "-"))
+        for n in opened.notices:
+            lines.append("notice      %s" % n)
     for f in r.different:
         lines.append("different   %-18s %s: %s" % (f.module, f.path, f.what))
     for f in r.undeclared:
@@ -156,10 +183,14 @@ def cmd_check(args):
             lines.append("receipt     %-18s %s: %s" % (f.kind, f.module or "release", f.what))
     for prob in r.problems:
         lines.append("problem     %s" % prob)
+    obj = r.as_dict()
+    if opened is not None:
+        obj["root"] = opened.path
+        obj["image"] = opened.as_dict()
     lines.append("%s: %d module(s)%s; %d different, %d undeclared, %d receipt(s) off"
-                 % (r.facts.root, len(r.modules), ", stack %s" % r.stack if r.stack else "",
+                 % (obj["root"], len(r.modules), ", stack %s" % r.stack if r.stack else "",
                     len(r.different), len(r.undeclared), len(off)))
-    _emit(args, r.as_dict(), lines)
+    _emit(args, obj, lines)
     return 0 if r.clean else 1
 
 
@@ -213,6 +244,9 @@ def parser():
                     " on its own); read at the point ROOT's fstab mounts it")
     sp.add_argument("--data", metavar="DIR",
                     help="the data partition, where it is not ROOT/data")
+    sp.add_argument("--image", metavar="FILE",
+                    help="check an image file: partitions found by label, mounted read-only as"
+                    " root, else read through debugfs (ext) and mtools (FAT)")
     sp.add_argument("--module", metavar="M",
                     help="only this module's declared resources (no undeclared part)")
     sp.add_argument("--tree", default=TREE, metavar="DIR",
