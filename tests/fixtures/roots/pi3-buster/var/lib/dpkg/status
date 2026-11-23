@@ -1,0 +1,5 @@
+Package: base-files
+Status: install ok installed
+Architecture: armhf
+Version: 10.3+rpi1+deb10u13
+Description: Debian base system miscellaneous files

@@ -1,0 +1,6 @@
+Package: libc6
+Architecture: amd64
+
+Package: base-files
+Architecture: amd64
+Version: 13.8

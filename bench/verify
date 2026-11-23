@@ -21,6 +21,9 @@
 #      nothing, and reports success. Layer 2 is the else branch the installer
 #      does not have. Details in bench/verify-modules.py.
 #
+#   3. ENGINE TESTS — tests/ (unittest, standard library) for the hasta/ engine,
+#      under python3 and, when one is at hand, a 3.7 interpreter (Buster's).
+#
 # WHAT A GREEN DOES NOT PROVE — read this before trusting one:
 #
 #   * that any script DOES the right thing. `bash -n` parses; it never runs.
@@ -85,9 +88,40 @@ echo
 echo "── module.ini referential integrity"
 python3 bench/verify-modules.py || red=1
 
+# ── layer 3 — the engine's unit tests (tests/) ─────────────────────
+#
+# The hasta/ engine must run on Python 3.7 (Raspbian Buster) as well as on current Debian, so
+# the suite runs under python3 and again under a 3.7 interpreter when one is at hand:
+# python3.7 on PATH, or one uv already has (`uv python find` never downloads). It says which.
+
+echo
+echo "── engine unit tests (tests/)"
+export PYTHONDONTWRITEBYTECODE=1   # 3.7 has no PYTHONPYCACHEPREFIX: keep __pycache__ out
+runtests() {
+    local py=$1 v
+    v=$("$py" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null) || {
+        fail "tests: cannot run $py"; return; }
+    if "$py" -m unittest discover -s tests -t . >"$pycache/tests.log" 2>&1; then
+        ok "tests green on python $v ($(tail -n 3 "$pycache/tests.log" | sed -n 's/^Ran //p'))"
+    else
+        cat "$pycache/tests.log"
+        fail "tests red on python $v ($py)"
+    fi
+}
+runtests python3
+py37=$(command -v python3.7 2>/dev/null || true)
+if [ -z "$py37" ] && command -v uv >/dev/null 2>&1; then
+    py37=$(UV_PYTHON_DOWNLOADS=never uv python find 3.7 2>/dev/null || true)
+fi
+if [ -n "$py37" ]; then
+    runtests "$py37"
+else
+    echo "warn  no python 3.7 at hand — tests ran on python3 only (tests/test_py37.py checks the syntax)"
+fi
+
 echo
 if [ "$red" -ne 0 ]; then
     echo "verify: RED"
     exit 1
 fi
-echo "verify: green — syntax and module refs only (the header says what that leaves unproven)"
+echo "verify: green — syntax, module refs and the engine tests (the header says what that leaves unproven)"

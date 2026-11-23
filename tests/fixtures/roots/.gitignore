@@ -1,0 +1,4 @@
+# The repo's .gitignore drops lib/ and var/ (Python build dirs); a fixture root is a filesystem
+# and needs both (/lib/modules, /var/lib/dpkg/status, /usr/lib/os-release).
+!lib/
+!var/

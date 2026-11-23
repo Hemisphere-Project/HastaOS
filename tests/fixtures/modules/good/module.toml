@@ -1,0 +1,92 @@
+# A fixture manifest using every part of schema 1 (docs/DESIGN.md, "The manifest").
+schema = 1
+undeclared = ["rewrites /etc/fstab from a probe of the partition table"]
+requires = ["storage.data"]
+provides = ["storage.ro-root"]
+claims = ["display"]
+
+[module]
+id = "example"
+version = "1.2.0"
+layer = "core"
+summary = "Exercises every key of the schema"
+
+[supports]
+machine = ["rpi3", "rpi4"]
+base = ["raspbian-buster", "debian-bookworm"]
+architecture = ["armhf", "arm64"]
+graphics = ["legacy", "kms"]
+stack = ["rasta"]
+
+[options.readonly]
+type = "bool"
+default = true
+summary = "Mount the root read-only"
+
+[options.mode]
+type = "enum"
+choices = ["ro", "rw"]
+default = "ro"
+
+[options.retries]
+type = "int"
+default = 3
+
+[resources.packages]
+any = ["rsync"]
+"raspbian-buster" = ["busybox"]
+
+[[resources.files]]
+path = "/etc/example.conf"
+source = "example/example.conf"
+mode = "0644"
+copy = true
+
+[[resources.links]]
+path = "/usr/local/bin/example"
+target = "/opt/HastaOS/example/example"
+
+[[resources.units]]
+name = "example.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "example/example.service"
+
+[[resources.units]]
+name = "apt-daily.timer"
+state = "masked"
+
+[[resources.lines]]
+file = "cmdline"
+line = "fastboot"
+
+[[resources.lines]]
+file = "config"
+section = "all"
+line = "disable_splash=1"
+present = true
+
+[[resources.lines]]
+file = "fstab"
+line = "tmpfs /tmp tmpfs defaults 0 0"
+
+[[resources.artefacts]]
+path = "/opt/example/blob.bin"
+target = "rpi3"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[state]]
+path = "/data/example"
+summary = "what the module keeps across boots"
+
+[[writes]]
+path = "/data/example/last"
+when = "boot"
+
+[[seal]]
+path = "/data/example/id"
+action = "delete"
+
+[[migrations]]
+from = "1.1"
+summary = "move the old state file under /data/example"

@@ -1,0 +1,16 @@
+# A fixture manifest with three mistakes: an unknown layer, a unit state, a typo'd key.
+schema = 1
+
+[module]
+id = "broken"
+version = "0.1"
+layer = "plugin"
+summary = "Refused by the validator"
+
+[[resources.units]]
+name = "broken.service"
+state = "running"
+
+[[resources.files]]
+path = "/etc/broken.conf"
+sorce = "broken/broken.conf"
