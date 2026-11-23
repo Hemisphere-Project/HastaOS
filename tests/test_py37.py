@@ -15,9 +15,11 @@ NEWER = re.compile(r"\.removeprefix\(|\.removesuffix\(|functools\.cache\b|from f
 
 def engine_files():
     out = [os.path.join(REPO, "bin", "hasta")]
-    for dirpath, dirnames, filenames in os.walk(os.path.join(REPO, "hasta")):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
-        out += [os.path.join(dirpath, f) for f in filenames if f.endswith(".py")]
+    # the engine, and the stack steps it loads (stacks/<name>/<revision>/steps.py)
+    for top in ("hasta", "stacks"):
+        for dirpath, dirnames, filenames in os.walk(os.path.join(REPO, top)):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            out += [os.path.join(dirpath, f) for f in filenames if f.endswith(".py")]
     return sorted(out)
 
 
