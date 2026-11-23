@@ -1,6 +1,7 @@
 """The Rasta 7.5 stack steps (#t-010): on the same 7.4-shaped card, the engine's port and
 image/rastaos-bake leave identical trees, and a second run changes nothing."""
 
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import unittest
 
 from hasta import stack
 from tests.helpers import REPO
+from tests.test_cli import run
 
 BAKE = os.path.join(REPO, "image", "rastaos-bake")
 STEPS = "stamps,version,units,rtc,turbo,apfix,dns,wifi,nowde,media,starter"
@@ -154,6 +156,74 @@ class BakeParity(unittest.TestCase):
             stack.run(REPO, "rasta/9.9", root=self.b)
         with self.assertRaises(ValueError):
             stack.run(REPO, "../etc", root=self.b)
+
+
+class ApplyStack(unittest.TestCase):
+    """`hasta apply --stack` on a mounted card: the stack's steps alone, the bake's tree."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hasta-stack-cli-")
+        self.card = os.path.join(self.tmp, "card")
+        self.ref = os.path.join(self.tmp, "ref")
+        for d in (self.card, self.ref):
+            os.makedirs(d)
+            card74(d)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_apply_stack_on_a_card_is_the_port(self):
+        code, out, err = run("apply", "--root", self.card, "--stack", "rasta/7.5")
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("modules    not run on a mounted card", out)
+        self.assertIn("step         dns: static resolv.conf (1.1.1.1, 1.0.0.1)", out)
+        stack.run(REPO, "rasta/7.5", root=self.ref)
+        self.assertEqual(tree(self.card), tree(self.ref))
+        code, out, _ = run("--json", "apply", "--root", self.card, "--stack", "rasta/7.5")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["stack"]["changes"], [])
+
+    def test_only_and_options_and_partitions_elsewhere(self):
+        boot, data = os.path.join(self.tmp, "p1"), os.path.join(self.tmp, "p3")
+        shutil.move(os.path.join(self.card, "boot"), boot)
+        shutil.move(os.path.join(self.card, "data"), data)
+        mire = os.path.join(self.tmp, "mire.mp4")
+        with open(mire, "w") as f:
+            f.write("the 7.3 mire\n")
+        code, out, err = run("apply", "--root", self.card, "--boot", boot, "--data", data,
+                             "--stack", "rasta/7.5", "--only", "media,rtc",
+                             "--option", "mire=" + mire)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(sorted(os.listdir(os.path.join(data, "media"))), ["0_mire.mp4"])
+        with open(os.path.join(data, "media", "0_mire.mp4")) as f:
+            self.assertEqual(f.read(), "the 7.3 mire\n")
+        with open(os.path.join(boot, "config.txt")) as f:
+            self.assertIn("#dtoverlay=i2c-rtc,ds3231", f.read())
+        self.assertTrue(os.path.islink(os.path.join(self.card, "etc/resolv.conf")))
+        self.assertNotIn("modules    not run", out)
+
+    def test_a_failed_step_exits_1(self):
+        os.remove(os.path.join(self.card, "data/media/0_mire.mp4"))
+        code, out, _ = run("apply", "--root", self.card, "--stack", "rasta/7.5")
+        self.assertEqual(code, 1)
+        self.assertIn("1 failed: media", out)
+
+    def test_dry_run_changes_nothing(self):
+        before = tree(self.card)
+        code, out, _ = run("apply", "--root", self.card, "--stack", "rasta/7.5", "--dry-run",
+                           "--only", "dns,wifi")
+        self.assertEqual(code, 0)
+        self.assertIn("would run  dns wifi", out)
+        self.assertEqual(tree(self.card), before)
+
+    def test_usage(self):
+        for argv in (["--only", "dns"], ["--boot", self.card],
+                     ["--stack", "rasta/9.9"], ["--stack", "rasta/7.5", "--resume"],
+                     ["--stack", "rasta/7.5", "--option", "nowde"],
+                     ["--stack", "rasta/7.5", "--only", "seal"]):
+            code, _, err = run("apply", "--root", self.card, *argv)
+            self.assertEqual(code, 2, argv)
+            self.assertTrue(err, argv)
 
 
 if __name__ == "__main__":

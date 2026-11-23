@@ -12,6 +12,7 @@ from hasta import check as check_mod
 from hasta import facts as facts_mod
 from hasta import manifest
 from hasta import plan as plan_mod
+from hasta import stack as stack_mod
 
 # The HastaOS checkout this engine runs from: the tree `hasta modules` reads by default.
 TREE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,6 +164,34 @@ def cmd_apply(args):
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
+    only, opts = None, {}
+    stack_only = [f for f, v in (("--only", args.only), ("--option", args.option),
+                                 ("--boot", args.boot), ("--data", args.data)) if v]
+    if stack_only and not args.stack:
+        print("hasta apply: %s: only with --stack" % ", ".join(stack_only), file=sys.stderr)
+        return 2
+    if args.stack:
+        if args.resume:
+            print("hasta apply: --resume reruns an interrupted module apply: not with --stack",
+                  file=sys.stderr)
+            return 2
+        try:
+            stack_mod.stack_dir(os.path.abspath(args.tree), args.stack)
+        except ValueError as exc:
+            print("hasta apply: %s" % exc, file=sys.stderr)
+            return 2
+        if args.only is not None:
+            only = [n for n in args.only.replace(",", " ").split() if n]
+        for kv in args.option or ():
+            if "=" not in kv:
+                print("hasta apply: --option %s: KEY=VALUE" % kv, file=sys.stderr)
+                return 2
+            k, v = kv.split("=", 1)
+            opts[k.strip()] = v
+    # A mounted card takes the stack's steps alone: the legacy driver applies to the running box
+    # only, and its modules re-apply on the booted card (the bake's offline converge did that).
+    offline = os.path.realpath(root) != "/"
+    modules = not (args.stack and (only is not None or offline))
     if args.resume:
         req = apply_mod.pending(root)
         if req is None:
@@ -187,20 +216,51 @@ def cmd_apply(args):
             print("hasta apply: could not remount the root read-write: nothing ran",
                   file=sys.stderr)
             return 1
-    r = None
+    r = st = None
+    usage = False
+    stack_lines = []
     try:
-        r = apply_mod.apply(tree, root, receipts_path=receipts, select=select, platform=platform,
-                            apps=request["apps"], dry_run=args.dry_run, force=force,
-                            resumed=args.resume, request=request)
+        if modules:
+            r = apply_mod.apply(tree, root, receipts_path=receipts, select=select,
+                                platform=platform, apps=request["apps"], dry_run=args.dry_run,
+                                force=force, resumed=args.resume, request=request)
+        # a failed module apply stops there: no stack step on a box its modules did not reach
+        if args.stack and (not modules or not r.failed):
+            stack_lines.append("stack      %s on %s%s" % (args.stack, root, "" if offline
+                               else " (live)"))
+            if offline and only is None:
+                stack_lines.append("modules    not run on a mounted card: they re-apply on the"
+                                   " booted box")
+            if args.dry_run:
+                mod = stack_mod.load(stack_mod.stack_dir(os.path.abspath(args.tree), args.stack))
+                names = [n for n in mod.STEPS if only is None or n in only]
+                stack_lines.append("would run  %s (dry run: nothing changed)" % " ".join(names))
+            else:
+                echo = None if args.json else (lambda m: print("step       " + m))
+                if echo:
+                    for ln in stack_lines:
+                        print(ln)
+                    stack_lines = []
+                st = stack_mod.run(os.path.abspath(args.tree), args.stack, root=root,
+                                   boot=args.boot, data=args.data, only=only, opts=opts,
+                                   out=echo)
+                stack_lines.append("stack      %s: %d change(s), %d failed%s"
+                                   % (args.stack, len(st.changes), len(st.failed),
+                                      (": " + " ".join(st.failed)) if st.failed else ""))
     except ValueError as exc:
         print("hasta apply: %s" % exc, file=sys.stderr)
+        usage = True
     finally:
         held = rw is not None and not rw.give()
     if held:
         print("hasta apply: the root stayed read-write: `ro` could not remount it (see"
               " `fuser -vm /`), then run `ro`", file=sys.stderr)
-    if r is None:
+    if usage or (r is None and st is None and not (args.stack and args.dry_run)):
         return 2
+    if r is None:
+        obj = {"stack": st.as_dict() if st else None}
+        _emit(args, obj, stack_lines)
+        return 1 if (st and st.failed) or held else 0
     lines = ["%-10s %-18s %s" % (s["action"], s["module"], s["why"]) for s in r.steps]
     for s in r.steps:
         if s["outcome"] not in ("none",):
@@ -212,8 +272,11 @@ def cmd_apply(args):
                     " (dry run: nothing changed)" if args.dry_run else ""))
     if r.failed:
         lines.append("apply: failed: %s" % " ".join(r.failed))
-    _emit(args, r.as_dict(), lines)
-    return 1 if r.failed or held else 0
+    obj = r.as_dict()
+    if args.stack:
+        obj["stack"] = st.as_dict() if st else None
+    _emit(args, obj, lines + stack_lines)
+    return 1 if r.failed or held or (st and st.failed) else 0
 
 
 def cmd_check(args):
@@ -321,7 +384,8 @@ def parser():
              " receipt per module under /etc/hasta/receipts; a module whose receipt is current"
              " is not run again")
     sp.add_argument("--root", default="/", metavar="DIR",
-                    help="only with --dry-run: the legacy driver applies to the running box")
+                    help="a mounted card: with --stack its steps alone, else only with"
+                    " --dry-run (the legacy driver applies to the running box)")
     sp.add_argument("--tree", default=TREE, metavar="DIR",
                     help="the module tree to apply (default: this checkout)")
     sp.add_argument("--receipts", metavar="FILE",
@@ -338,6 +402,18 @@ def parser():
     sp.add_argument("--dry-run", action="store_true", help="say what would run, change nothing")
     sp.add_argument("--force", action="store_true",
                     help="run every module again, even those whose receipt is current")
+    sp.add_argument("--stack", metavar="NAME/REV",
+                    help="then run this stack's steps (stacks/NAME/REV/steps.py: e.g. rasta/7.5,"
+                    " what image/rastaos-bake does to a 7.4 card); on a mounted card they"
+                    " run alone")
+    sp.add_argument("--only", metavar="STEPS",
+                    help="with --stack: only these steps (comma or space separated), no module")
+    sp.add_argument("--option", action="append", metavar="KEY=VALUE",
+                    help="with --stack: a step option (rasta/7.5: nowde=VERSION, mire=FILE)")
+    sp.add_argument("--boot", metavar="DIR",
+                    help="with --stack: the card's boot partition (default ROOT/boot)")
+    sp.add_argument("--data", metavar="DIR",
+                    help="with --stack: the card's data partition (default ROOT/data)")
     sp.add_argument("--resume", action="store_true",
                     help="rerun what an interrupted apply's marker on /data names; nothing"
                     " without one (the boot unit's call)")
