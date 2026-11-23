@@ -222,6 +222,22 @@ any = ["rsync"]
 Top-level keys (`requires`, `undeclared`…) go before the first `[table]`: TOML puts a key written
 after a table header inside that table, and the validator then reports it as unknown there.
 
+**Paths.** A `source`, and a link `target` that is relative, name a file in the directory that
+holds the `module.toml` (the module's own directory: what the legacy driver links, by the same
+name); an absolute `target` is a path on the box (`/data/var/root.bash_history`). `state`,
+`writes` and `seal` paths are box paths. An `fstab` line compares field by field, whitespace
+collapsed: the installers pad their columns. `cmdline` and `config` lines hold where the box has
+that file (a Pi); a `cmdline` line is one token of the command line.
+
+**Declared state today.** The eight core modules carry a `module.toml` (#t-005): rorw, extendfs,
+flightbox, blackbox, splash, starter, hostrename, and datesync, whose three loose files sit at the
+root of the tree, so its manifest is the root's `module.toml`. Each is data only — the installers
+are unchanged — and `undeclared` lists every installer step schema 1 cannot say (a probed fstab, a
+generated file, an x86 branch): the to-do of the native ports. A manifest leaves `supports` out
+where the module runs on every machine, as the legacy driver reads `platforms = pi,x86`.
+`tests/test_declared.py` holds them to the tree: valid, every source present, every bin and unit
+of the `module.ini` declared again, every unit file in the directory declared or listed.
+
 ## 8. Tests
 
 `tests/` (standard-library `unittest`) runs inside `bench/verify`, the repo's one gate, under

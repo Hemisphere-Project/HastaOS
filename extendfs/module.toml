@@ -1,0 +1,60 @@
+# What extendfs leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.data"]
+undeclared = [
+  "the installer links extendfs.service without enabling it and writes the starter.txt entry `extendfs` commented: after setup.sh nothing starts it at boot. The enabled state declared here is what the 7.5 image holds, wired by the bake's seal (image/rastaos-bake step_seal), by the unit's own WantedBy",
+  "on a new drive (disk serial differs from /data/var/drive-id): rw, growpart and resize2fs of /data's partition, then the clone's identity reset (machine-id, SSH host keys and an sshd restart, Tailscale state) and up to two self-reboots",
+  "touches /tmp/new-drive for other services; nothing in this tree reads it",
+]
+
+[module]
+id = "extendfs"
+version = "1.0"
+layer = "core"
+summary = "Grow /data to fill a new drive at first boot, and reset a cloned card's identity"
+
+[resources.packages]
+any = ["cloud-guest-utils"]   # growpart
+
+[[resources.links]]
+path = "/usr/local/bin/extendfs"
+target = "extendfs"
+
+[[resources.units]]
+name = "extendfs.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "extendfs.service"
+
+[[state]]
+path = "/data/var/drive-id"
+summary = "the disk serial /data was last grown for; equal at boot = nothing to do"
+
+[[state]]
+path = "/data/var/drive-id-stage1"
+summary = "set between the partition grow and the reboot the kernel needs to reread the table"
+
+[[writes]]
+path = "/data/var/drive-id"
+when = "boot"
+summary = "only on a new drive"
+
+[[writes]]
+path = "/etc/machine-id"
+when = "boot"
+summary = "regenerated on a new drive (clone identity reset)"
+
+[[writes]]
+path = "/etc/ssh"
+when = "boot"
+summary = "SSH host keys regenerated on a new drive"
+
+[[seal]]
+path = "/data/var/drive-id"
+action = "delete"
+summary = "every burned card then takes the clone path at its first boot"
+
+[[seal]]
+path = "/data/var/drive-id-stage1"
+action = "delete"

@@ -1,0 +1,234 @@
+# What rorw leaves on a box (docs/DESIGN.md §7, schema 1). Data only: install.sh and upgrade.sh
+# are unchanged and still do the work. Paths in `source` and a relative link `target` are
+# relative to this directory; an absolute `target` is a box path.
+schema = 1
+provides = ["storage.ro-root", "storage.data", "clock.floor"]
+undeclared = [
+  "install.sh probes the partition layout (mmcblk0p3, mmcblk1p8, sda3, nvme0n1p3; 1=boot 2=root 3=data, never repartitions) and writes the boot, root and /data UUID lines of /etc/fstab from that probe",
+  "install.sh rewrites /etc/fstab whole: the /tmp line carries a size computed from the RAM (MemTotal / 8000, 128 to 1024 MB)",
+  "install.sh, Pi only: appends `proc /proc proc defaults 0 0` to /etc/fstab (lines carry no machine selector in schema 1)",
+  "install.sh: root=UUID=<probed root> on the kernel command line (cmdline.txt, or extlinux.conf on a RockPro64)",
+  "install.sh, RockPro64 (mmcblk1p8): seds /boot/extlinux/extlinux.conf (`rw` to `fastboot noswap ro`); schema 1 has no extlinux line file",
+  "install.sh, when /var/lib/snapd exists: copies it to /data/var/snapd and appends its bind line to /etc/fstab",
+  "install.sh, x86 with /etc/default/grub: GRUB_RECORDFAIL_TIMEOUT=2, then update-grub; schema 1 has no grub line file",
+  "install.sh: `systemctl disable systemd-random-seed` (haveged replaces it); the unit is most likely static, so the disable may change nothing on the box",
+  "install.sh: `swapoff -a` at install time (no lasting state; `noswap` on the command line is declared)",
+  "install.sh: mount -a, then `chmod -R 777 /tmp`",
+  "install.sh appends two lines to /root/.bashrc on every run: `source <tree>/rorw/rorw.bashrc` and OSH_THEME=\"rorw/rorw\" (a theme that exists nowhere)",
+  "install.sh, when /root/.oh-my-bash exists: moves its log to /data/var/ohmybash/log and links it back",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+  "upgrade.sh writes /etc/tmpfiles.d/zz-pitools-tmp.conf, one generated line `z /tmp 1777 root root -`: schema 1 files need a source in the tree",
+  "upgrade.sh keeps a marker-delimited block (`# >>> pitools rorw >>>`: history -a, fake-clock save) at the end of /etc/bash.bash_logout",
+  "upgrade.sh moves a plain /root/.bash_history into /data/var/root.bash_history before linking it",
+  "upgrade.sh runs `fake-clock save` (a /data write) on every pass",
+  "data-repair and data-repair.service are declared by module.ini but linked by no installer path in this tree (they came with a field pack): a box made by install.sh lacks them",
+  "fake-clock-autosave saves only while blackbox's `diag` is armed: on a box without blackbox (any x86) it never saves",
+]
+
+[module]
+id = "rorw"
+version = "1.0"
+layer = "core"
+summary = "Read-only root and boot with a writable /data, the rw/ro refcount, and the fake clock floor"
+
+[resources.packages]
+# haveged: install.sh. dosfstools: `ro` runs fsck.fat on the boot FAT; module.ini names it, but
+# the ini's [deps] is never read for a script module (it arrives through usbautomount today).
+any = ["haveged", "dosfstools"]
+
+[[resources.links]]
+path = "/usr/local/bin/ro"
+target = "ro"
+
+[[resources.links]]
+path = "/usr/local/bin/rw"
+target = "rw"
+
+[[resources.links]]
+path = "/usr/local/bin/fake-clock"
+target = "fake-clock"
+
+[[resources.links]]
+path = "/usr/local/bin/ro-assert"
+target = "ro-assert"
+
+[[resources.links]]
+path = "/usr/local/bin/data-repair"
+target = "data-repair"
+
+[[resources.links]]
+path = "/usr/local/lib/pitools/with_rw.sh"
+target = "with_rw.sh"
+
+[[resources.links]]
+path = "/root/.bash_history"
+target = "/data/var/root.bash_history"
+
+[[resources.units]]
+name = "fake-clock.service"
+state = "enabled"
+wanted_by = ["sysinit.target"]
+source = "fake-clock.service"
+
+[[resources.units]]
+name = "fake-clock-autosave.service"
+state = "static"
+source = "fake-clock-autosave.service"
+
+[[resources.units]]
+name = "fake-clock-autosave.timer"
+state = "enabled"
+wanted_by = ["fake-clock.service"]
+source = "fake-clock-autosave.timer"
+
+[[resources.units]]
+name = "ro-assert.service"
+state = "static"
+source = "ro-assert.service"
+
+[[resources.units]]
+name = "ro-assert.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "ro-assert.timer"
+
+[[resources.units]]
+name = "data-repair.service"
+state = "enabled"
+wanted_by = ["local-fs.target"]
+source = "data-repair.service"
+
+[[resources.units]]
+name = "haveged.service"
+state = "enabled"
+wanted_by = ["default.target"]
+
+[[resources.units]]
+name = "systemd-timesyncd.service"
+state = "disabled"
+
+[[resources.units]]
+name = "ntp.service"
+state = "disabled"
+
+# /var/log is a bind of /tmp and /var/backups is on the read-only root: these can only fail.
+[[resources.units]]
+name = "logrotate.service"
+state = "masked"
+
+[[resources.units]]
+name = "logrotate.timer"
+state = "masked"
+
+[[resources.units]]
+name = "dpkg-db-backup.service"
+state = "masked"
+
+[[resources.units]]
+name = "dpkg-db-backup.timer"
+state = "masked"
+
+# The kernel command line (a Pi's cmdline.txt): `rootwait` gains `fastboot noswap ro`, and the
+# legacy /boot branch strips `rw`.
+[[resources.lines]]
+file = "cmdline"
+line = "fastboot"
+
+[[resources.lines]]
+file = "cmdline"
+line = "noswap"
+
+[[resources.lines]]
+file = "cmdline"
+line = "ro"
+
+[[resources.lines]]
+file = "cmdline"
+line = "rw"
+present = false
+
+# The fstab lines that do not depend on a probe (written with column padding; compare by field).
+[[resources.lines]]
+file = "fstab"
+line = "/run /var/run none defaults,bind 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/tmp /var/lock none defaults,bind 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/tmp /var/spool none defaults,bind 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/tmp /var/log none defaults,bind 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/tmp /var/tmp none defaults,bind 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/data/var/cache /root/.cache none defaults,bind,nofail 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/data/var/dnsmasq /var/lib/dnsmasq none defaults,bind,nofail 0 0"
+
+[[resources.lines]]
+file = "fstab"
+line = "/data/var/NetworkManager /var/lib/NetworkManager none defaults,bind,nofail 0 0"
+
+[[state]]
+path = "/data/var/fake-clock.state"
+summary = "the clock floor: its mtime is the time restored at boot"
+
+[[state]]
+path = "/data/var/root.bash_history"
+summary = "root's shell history, kept off the read-only root"
+
+[[state]]
+path = "/data/var/NetworkManager"
+summary = "bound over /var/lib/NetworkManager"
+
+[[state]]
+path = "/data/var/dnsmasq"
+summary = "bound over /var/lib/dnsmasq"
+
+[[state]]
+path = "/data/var/cache"
+summary = "bound over /root/.cache"
+
+[[state]]
+path = "/data/media"
+summary = "created empty for the players' media"
+
+[[state]]
+path = "/data/var/tmp"
+summary = "created by install.sh, read by nothing"
+
+[[writes]]
+path = "/data/var/fake-clock.state"
+when = "shutdown"
+summary = "root's logout hook saves the clock"
+
+[[writes]]
+path = "/data/var/fake-clock.state"
+when = "steady"
+summary = "hourly autosave, only while diag is armed"
+
+[[writes]]
+path = "/data/var/root.bash_history"
+when = "event"
+summary = "history -a at each root logout"
+
+[[writes]]
+path = "/run/pitools-rw.count"
+when = "event"
+summary = "the rw/ro holder count, on tmpfs"
+
+[[seal]]
+path = "/data/var/root.bash_history"
+action = "truncate"
+summary = "a burned card starts with no shell history of the golden"

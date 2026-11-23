@@ -1,0 +1,48 @@
+# What flightbox leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+provides = ["log.ring"]
+undeclared = [
+  "the ring itself: partition 4 of the root disk (type 0xda, made by image/flightbox-p4) or /data/.flightbox (made by `flightbox reserve`); install.sh makes neither, and schema 1 has no partition resource",
+  "flightbox-lazytime.service remounts /data with lazytime when /data/.flightbox exists (a mount option, not an fstab line)",
+  "not in any installer group: only a hand-run install.sh lays it down",
+]
+
+[module]
+id = "flightbox"
+version = "1.0"
+layer = "core"
+summary = "Raw ring buffer for the post-mortem trail, with no filesystem in the write path"
+
+[supports]
+machine = ["rpi*"]
+
+[[resources.links]]
+path = "/usr/local/bin/flightbox"
+target = "flightbox"
+
+[[resources.units]]
+name = "flightbox-scan.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "flightbox-scan.service"
+
+[[resources.units]]
+name = "flightbox-lazytime.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "flightbox-lazytime.service"
+
+[[state]]
+path = "/data/.flightbox"
+summary = "the ring in file mode, on a live card that has no partition 4"
+
+[[writes]]
+path = "/data/.flightbox"
+when = "event"
+summary = "dd oflag=direct appends, on journal-export's and blackbox's call"
+
+[[writes]]
+path = "/run/flightbox.state"
+when = "boot"
+summary = "the tail found by the boot scan, on tmpfs"

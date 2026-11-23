@@ -1,0 +1,36 @@
+# What datesync leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# datesync is three loose files at the root of the tree (datesync, datesync.service,
+# datesync.timer), so its manifest sits here, beside them; no module directory moves in this
+# phase. Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "no module.ini and no receipt: setup/installer.py links and enables it inline after the core modules, so converge and /etc/pi-tools-modules.txt never see it",
+  "programs /dev/rtc0 with `hwclock -w` when the box has one",
+  "runs `fake-clock save` (rorw) when the clock moved: an ungated /data write every 30 minutes online, where rorw's own autosave waits for diag to be armed",
+]
+
+[module]
+id = "datesync"
+version = "1.0"
+layer = "core"
+summary = "Set the clock from an HTTPS Date header where NTP is blocked and there is no RTC"
+
+[[resources.links]]
+path = "/usr/local/bin/datesync"
+target = "datesync"
+
+[[resources.units]]
+name = "datesync.service"
+state = "static"
+source = "datesync.service"
+
+[[resources.units]]
+name = "datesync.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "datesync.timer"
+
+[[writes]]
+path = "/data/var/fake-clock.state"
+when = "steady"
+summary = "the fake-clock floor, refreshed when the clock moved (30 s after boot, then every 30 min)"

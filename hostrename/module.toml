@@ -1,0 +1,33 @@
+# What hostrename leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.ro-root", "boot.starter"]
+undeclared = [
+  "the box's name is a starter.txt line, `hostrename@<name>` (module.ini's entry: hostrename@artbox-000): the one per-box identity lives in a unit instance name",
+  "on a rename: rewrites ssid= in <boot>/wifi/*-hotspot.nmconnection (boot dir by probe), restarts avahi and runs setnet",
+]
+
+[module]
+id = "hostrename"
+version = "1.0"
+layer = "core"
+summary = "Set the hostname from starter.txt and follow it in the hotspot SSID"
+
+[[resources.links]]
+path = "/usr/local/bin/hostrename"
+target = "hostrename"
+
+[[resources.units]]
+name = "hostrename@.service"
+state = "disabled"
+source = "hostrename@.service"
+
+[[writes]]
+path = "/etc/hostname"
+when = "event"
+summary = "on a rename (hostnamectl), between rw and ro"
+
+[[writes]]
+path = "/etc/hosts"
+when = "event"
+summary = "on a rename"

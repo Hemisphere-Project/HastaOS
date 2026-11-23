@@ -78,6 +78,7 @@ class LegacyDriver(unittest.TestCase):
         self.assertEqual(rorw.upgrade, "upgrade.sh")
         self.assertEqual(rorw.platforms, ["pi", "x86"])
         self.assertIn("/usr/local/bin/ro", rorw.declared())
+        rorw.toml = None  # the .ini's own reading: rorw's module.toml (#t-005) would answer instead
         units = dict((u["name"], u["state"]) for u in rorw.model()["resources"]["units"])
         self.assertEqual(units["data-repair.service"], "enabled")
         self.assertEqual(units["fake-clock.service"], "disabled")

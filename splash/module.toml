@@ -1,0 +1,36 @@
+# What splash leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+# Declared: the Pi path. The x86 path (install-x86-plymouth.sh) is listed under `undeclared`:
+# schema 1 resources carry no machine selector, so one manifest cannot hold both.
+schema = 1
+claims = ["display.boot"]
+undeclared = [
+  "x86 (uname -m = x86_64): install.sh hands over to install-x86-plymouth.sh and lays down nothing of the Pi path",
+  "x86: packages plymouth and plymouth-theme-spinner",
+  "x86: dpkg-divert of the spinner theme's watermark.png, replaced by a generated 1x1 transparent PNG",
+  "x86: update-alternatives sets default.plymouth to the spinner theme; /etc/plymouth/plymouthd.conf written whole (Theme=spinner)",
+  "x86: /etc/default/grub edits: GRUB_TIMEOUT_STYLE=hidden, GRUB_TIMEOUT=2, GRUB_RECORDFAIL_TIMEOUT=2, console=tty3 on GRUB_CMDLINE_LINUX, systemd.show_status=false on GRUB_CMDLINE_LINUX_DEFAULT",
+  "x86: /etc/grub.d/06_pitools_silent written whole (timeout_style hidden, timeout 2), then update-grub and update-initramfs -u on every run",
+  "x86: pitools-vt1.service linked and enabled (multi-user.target): chvt 1 after plymouth quits",
+  "x86: never links the splash bin or splash.service that module.ini declares, so converge always reads it as not installed",
+]
+
+[module]
+id = "splash"
+version = "1.0"
+layer = "core"
+summary = "Boot splash: a PNG on the Pi framebuffer, then a resident black image (x86: a silent plymouth spinner)"
+
+[resources.packages]
+"raspbian-buster" = ["fbi"]
+"debian-bookworm" = ["fbi"]
+
+[[resources.links]]
+path = "/usr/local/bin/splash"
+target = "splash"
+
+[[resources.units]]
+name = "splash.service"
+state = "enabled"
+wanted_by = ["sysinit.target"]
+source = "splash.service"

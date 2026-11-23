@@ -1,0 +1,24 @@
+# What starter leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+provides = ["boot.starter"]
+undeclared = [
+  "the installer's hook creates starter.txt on the boot partition (/boot/firmware or /boot, by probe) with a comment header when it is missing; schema 1 files need a source in the tree",
+  "starter.txt is a parameter store too: other modules' lines (hostrename@<name>, synczinc@<role>, hplayer2@<profile>) carry per-box values in unit instance names",
+]
+
+[module]
+id = "starter"
+version = "1.0"
+layer = "core"
+summary = "Start at boot the units listed in starter.txt on the boot partition"
+
+[[resources.links]]
+path = "/usr/local/bin/starter"
+target = "starter"
+
+[[resources.units]]
+name = "starter.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "starter.service"
