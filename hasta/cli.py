@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from hasta import SCHEMA_VERSION, __version__
+from hasta import apply as apply_mod
 from hasta import check as check_mod
 from hasta import facts as facts_mod
 from hasta import manifest
@@ -134,6 +135,46 @@ def cmd_plan(args):
     return 1 if p.problems else 0
 
 
+def cmd_apply(args):
+    root = args.root
+    if args.resume:
+        req = apply_mod.pending(root)
+        if req is None:
+            _emit(args, {"resumed": False, "steps": []}, ["nothing to resume"])
+            return 0
+        tree, select = req.get("tree") or os.path.abspath(args.tree), req.get("modules")
+        receipts, platform = req.get("receipts"), req.get("platform")
+        apps, force = req.get("apps") or (), bool(req.get("force"))
+    else:
+        tree = os.path.abspath(args.tree)
+        select = None
+        if args.modules is not None:
+            select = [n for n in args.modules.replace(",", " ").split() if n]
+        receipts, platform, apps, force = args.receipts, args.platform, args.app or (), args.force
+    request = {"tree": tree, "modules": select, "receipts": receipts, "platform": platform,
+               "apps": [os.path.abspath(a) for a in apps], "force": force}
+    try:
+        r = apply_mod.apply(tree, root, receipts_path=receipts, select=select, platform=platform,
+                            apps=request["apps"], dry_run=args.dry_run, force=force,
+                            resumed=args.resume, request=request)
+    except ValueError as exc:
+        print("hasta apply: %s" % exc, file=sys.stderr)
+        return 2
+    lines = ["%-10s %-18s %s" % (s["action"], s["module"], s["why"]) for s in r.steps]
+    for s in r.steps:
+        if s["outcome"] not in ("none",):
+            lines.append("%-10s %-18s %s" % (s["outcome"], s["module"], s["action"]))
+    lines.append("%s%d module(s), %d ran, %d current, %d failed%s"
+                 % ("resumed: " if r.resumed else "", len(r.steps),
+                    sum(1 for s in r.steps if s["outcome"] in ("ran", "would-run")),
+                    sum(1 for s in r.steps if s["outcome"] == "current"), len(r.failed),
+                    " (dry run: nothing changed)" if args.dry_run else ""))
+    if r.failed:
+        lines.append("apply: failed: %s" % " ".join(r.failed))
+    _emit(args, r.as_dict(), lines)
+    return 1 if r.failed else 0
+
+
 def cmd_check(args):
     for flag, d in (("--boot", args.boot), ("--data", args.data)):
         if d and not os.path.isdir(d):
@@ -234,6 +275,29 @@ def parser():
     sp.add_argument("--platform", choices=("pi", "x86"),
                     help="override the platform the facts give")
     sp.set_defaults(func=cmd_plan)
+
+    sp = add("apply", "run the plan through the legacy driver (converge's code paths), one"
+             " receipt per module under /etc/hasta/receipts; a module whose receipt is current"
+             " is not run again")
+    sp.add_argument("--root", default="/", metavar="DIR",
+                    help="only with --dry-run: the legacy driver applies to the running box")
+    sp.add_argument("--tree", default=TREE, metavar="DIR",
+                    help="the module tree to apply (default: this checkout)")
+    sp.add_argument("--receipts", metavar="FILE",
+                    help="the module receipts (default: ROOT/etc/pi-tools-modules.txt)")
+    sp.add_argument("--modules", metavar="LIST",
+                    help="apply this module set (comma or space separated), not the receipts'")
+    sp.add_argument("--app", action="append", metavar="DIR",
+                    help="an app tree carrying its own module.ini (repeatable)")
+    sp.add_argument("--platform", choices=("pi", "x86"),
+                    help="override the platform the facts give")
+    sp.add_argument("--dry-run", action="store_true", help="say what would run, change nothing")
+    sp.add_argument("--force", action="store_true",
+                    help="run every module again, even those whose receipt is current")
+    sp.add_argument("--resume", action="store_true",
+                    help="rerun what an interrupted apply's marker on /data names; nothing"
+                    " without one (the boot unit's call)")
+    sp.set_defaults(func=cmd_apply)
 
     sp = add("check", "what the manifests declare against what the box holds, and the unit"
              " state no manifest declares; changes nothing")

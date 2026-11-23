@@ -114,7 +114,8 @@ Rules every change to the engine keeps:
   on current Debian: no walrus, no `match`, no `dict | dict`, no positional-only markers, no
   `tomllib` without the fallback. `tests/test_py37.py` and the 3.7 run in `bench/verify` hold this.
 - **No module directory moves or is renamed** while Pi-tools keeps merging in.
-- **Nothing a box runs changes** until `hasta apply` exists: the engine reads, it does not write.
+- **Only `hasta apply` writes a box**, and only through the legacy driver's code paths; every
+  other verb reads.
 - Names: command `hasta`, package `hasta/`, receipts under `/etc/hasta/`.
 
 ### `hasta facts [--root DIR]`
@@ -177,6 +178,30 @@ platform) and `unrecorded` (a script module with no receipt and no trace). The p
 facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_plan.py` runs
 `setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
 same decision for every module.
+
+### `hasta apply [--dry-run] [--force] [--resume] [--tree DIR] [--receipts FILE | --modules LIST] [--app DIR]`
+
+Runs `hasta plan`'s rows by the code paths `setup/converge.py` takes today: `upgrade` runs the
+module's `[install] upgrade` script with `--converging`, `script` and `install` run
+`setup/installer.py`'s `install_module`, `linked` runs nothing, `held`, `skip` and `unrecorded`
+run nothing; one daemon-reload at the end. It applies to the running box only (a chroot or a
+container for tests); `--root` is accepted with `--dry-run` alone.
+
+Receipts: one file per module under `/etc/hasta/receipts/<module>`, `KEY=value` lines — `MODULE`,
+`FINGERPRINT` (`setup/module-manifest`'s content hash, computed the same way in
+`hasta/apply.py`), `VERSION`, `OPTIONS` (the defaults, as JSON), `ACTION`, `APPLIED_AT`. A module
+whose receipt already names its current fingerprint, version and options is not run and its
+receipt is not rewritten, so a second apply changes nothing; `--force` runs every module again.
+A failed module gets no receipt. `/etc/pi-tools-modules.txt` and `/etc/rastaos-release` keep their
+writers (the installer, `rastaos-update`).
+
+Resume: while it runs, `/data/.hasta-apply` holds the request (tree, module set, receipts,
+platform, apps); it is removed when every module ended applied. `hasta apply --resume` reruns
+the request a marker holds, and does nothing without one: the receipts left by the modules that
+finished make the rerun run only the rest. Exit 0 applied or nothing to do, 1 a module failed, 2
+usage. `tests/test_apply.py`: the receipts, a second apply that changes nothing, a changed
+module that runs again alone, an apply killed half-way that completes on resume, `--dry-run`
+writing nothing, and the fingerprint equal to `module-manifest fingerprint`.
 
 ### `hasta check [--root DIR [--boot DIR] [--data DIR] | --image FILE] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
 
