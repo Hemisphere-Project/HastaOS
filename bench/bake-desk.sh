@@ -86,13 +86,13 @@ export RASTAOS_ALLOW_NONROOT=1 RASTAOS_LOCK=$T/update.lock    # rastaos-update's
 # The card's awk is mawk 1.3.3 (1996): no POSIX classes. There `[[:space:]]` silently never matches, and
 # this desk's awk has them (pi-tools#t-063). So every awk the bake calls goes through a shim that refuses
 # a program naming one: the step then fails here instead of passing here and misfiring on the card.
-DESK_AWK=$(command -v awk); export DESK_AWK; mkdir -p "$T/bin" "$T/failbin"
+DESK_AWK=$(command -v awk); export DESK_AWK; mkdir -p "$T/bin"
 cat > "$T/bin/awk" <<'SHIM'
 #!/bin/sh
 for a; do case $a in *'[[:'*) echo "awk (bake-desk): a POSIX class — the card's mawk 1.3.3 has none" >&2; exit 2 ;; esac; done
 exec "$DESK_AWK" "$@"
 SHIM
-printf '#!/bin/sh\nexit 2\n' > "$T/failbin/awk"; chmod 755 "$T/bin/awk" "$T/failbin/awk"; export PATH=$T/bin:$PATH
+chmod 755 "$T/bin/awk"; export PATH=$T/bin:$PATH
 
 chk "converge without --tag refuses (exit 2)" sh -c "'$BAKE' --root '$R' --boot '$B' >/dev/null 2>&1; [ \$? = 2 ]"
 chk "an unknown tag stops the bake (exit 1)" sh -c "'$BAKE' --tag nope --root '$R' --boot '$B' >/dev/null 2>&1; [ \$? = 1 ]"
@@ -191,9 +191,12 @@ chk "a drifted scan drop-in is rewritten (exit 0, 1 change)" sh -c "[ $rcw = 0 ]
 rm -rf "$R/etc/NetworkManager/conf.d"
 chk "--only wifi writes the drop-in with no conf.d yet" sh -c "'$BAKE' --only wifi --root '$R' --boot '$B' >/dev/null 2>&1 && cmp -s '$T/scan.want' '$SCAN'"
 mkdir -p "$R/etc/NetworkManager/conf.d"; printf '[main]\ndns=none\n' > "$R/etc/NetworkManager/conf.d/90-rastaos-dns.conf"
-cp "$B/starter.txt" "$T/starter.before"
-chk "starter whose awk fails fails (exit 1)" sh -c "PATH='$T/failbin':\$PATH '$BAKE' --only starter --root '$R' --boot '$B' >/dev/null 2>&1; [ \$? = 1 ]"
+# the starter is the engine's since hasta#t-010 (no awk): a step that refuses still leaves the file
+cp "$B/starter.txt" "$T/starter.baked"; echo 'hplayer2@26-anna' >> "$B/starter.txt"; cp "$B/starter.txt" "$T/starter.before"
+BC=$R/opt/HPlayer2/core/engine/bootconf.py; mv "$BC" "$T/bootconf.py"
+chk "starter on a player with no auto profile fails (exit 1)" sh -c "'$BAKE' --only starter --root '$R' --boot '$B' >/dev/null 2>&1; [ \$? = 1 ]"
 chk "  …and leaves starter.txt (never empties it)" cmp -s "$B/starter.txt" "$T/starter.before"
+mv "$T/bootconf.py" "$BC"; cp "$T/starter.baked" "$B/starter.txt"
 
 SEAL=("$BAKE" --only seal --root "$R" --boot "$B" --data "$D")
 chk "seal on the running card refuses (exit 2)" sh -c "'$BAKE' --only seal 2>&1 | grep -q 'never on the running card'; '$BAKE' --only seal >/dev/null 2>&1; [ \$? = 2 ]"

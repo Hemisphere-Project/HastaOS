@@ -121,7 +121,8 @@ class ModuleManifests(unittest.TestCase):
 # -- the Rasta 7.5 overlay (#t-006) ------------------------------------------------------------
 
 RASTA = os.path.join(REPO, "stacks", "rasta", "7.5")
-BAKE = os.path.join(REPO, "image", "rastaos-bake")
+# The bake as it was before its steps became the stack's (#t-010): what the overlay was written from.
+BAKE = os.path.join(TESTS, "fixtures", "rastaos-bake-7.5.reference")
 LISTING = os.path.join(TESTS, "fixtures", "listings", "rasta-7.5-rc-systemd-system.txt")
 UNITS_DIR = "/etc/systemd/system/"
 
@@ -264,6 +265,9 @@ class RastaOverlay(unittest.TestCase):
     def test_every_mask_of_the_bake_is_declared(self):
         masks = bake_word("MASK_UNITS")
         self.assertTrue(masks)
+        # the stack's steps mask what the bake masked
+        from hasta import stack
+        self.assertEqual(list(stack.load(RASTA).MASK_UNITS), masks)
         units = dict((u["name"], u["state"]) for u in self.m.data["resources"]["units"])
         for u in masks:
             with self.subTest(unit=u):

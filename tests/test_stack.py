@@ -1,5 +1,9 @@
-"""The Rasta 7.5 stack steps (#t-010): on the same 7.4-shaped card, the engine's port and
-image/rastaos-bake leave identical trees, and a second run changes nothing."""
+"""The Rasta 7.5 stack steps (#t-010): on the same 7.4-shaped card, the engine's port and the
+bake leave identical trees, and a second run changes nothing.
+
+The bake that did these steps by hand is kept as it was, tests/fixtures/rastaos-bake-7.5.reference
+(image/rastaos-bake at HastaOS cb792c6): image/rastaos-bake now runs them through the engine, so
+it can no longer be the port's reference. It is held to the same tree as the reference too."""
 
 import json
 import os
@@ -14,7 +18,8 @@ from hasta import stack
 from tests.helpers import REPO
 from tests.test_cli import run
 
-BAKE = os.path.join(REPO, "image", "rastaos-bake")
+REFERENCE = os.path.join(REPO, "tests", "fixtures", "rastaos-bake-7.5.reference")
+WRAPPER = os.path.join(REPO, "image", "rastaos-bake")
 STEPS = "stamps,version,units,rtc,turbo,apfix,dns,wifi,nowde,media,starter"
 
 
@@ -107,8 +112,10 @@ class BakeParity(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def bake(self, d):
-        return subprocess.run(["bash", BAKE, "--root", d, "--only", STEPS],
+    def bake(self, d, script=REFERENCE):
+        # BAKE_HOME: the reference names its recipe sha from image/, as the bake it was
+        env = dict(os.environ, BAKE_HOME=os.path.join(REPO, "image"))
+        return subprocess.run(["bash", script, "--root", d, "--only", STEPS], env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               universal_newlines=True)
 
@@ -121,6 +128,19 @@ class BakeParity(unittest.TestCase):
         # every step had something to do on this card
         self.assertEqual([s["outcome"] for s in r.steps], ["changed"] * len(r.steps))
         self.assertEqual(len(r.changes), len(re.findall(r"^\[bake\]   ", p.stdout, re.M)))
+
+    def test_the_wrapper_and_the_reference_leave_identical_trees(self):
+        ref = self.bake(self.a)
+        wrap = self.bake(self.b, script=WRAPPER)
+        self.assertEqual(wrap.returncode, 0, wrap.stdout)
+        self.assertEqual(tree(self.a), tree(self.b))
+        # the same change lines, in the same order, and the same closing count
+        changes = re.compile(r"^\[bake\]   (?!wifi: /)(?!media: \d).*$", re.M)
+        self.assertEqual(changes.findall(wrap.stdout), changes.findall(ref.stdout))
+        self.assertEqual(ref.stdout.splitlines()[-1], wrap.stdout.splitlines()[-1])
+        again = self.bake(self.b, script=WRAPPER)
+        self.assertIn("done — 0 change(s)", again.stdout)
+        self.assertEqual(len(re.findall(r": already done$", again.stdout, re.M)), 11)
 
     def test_a_second_run_changes_nothing(self):
         stack.run(REPO, "rasta/7.5", root=self.b)

@@ -14,6 +14,9 @@
 # Idempotent: a second run changes nothing and says so. Each step names the defect it removes.
 # Run it from a Pi-tools tree at the release (a /tmp clone or bundle on the card), not from the
 # card's own /opt/Pi-tools: 7.4's checkout has no image/ and no setup/rastaos-update.
+# Since hasta#t-010 the steps stamps to starter are the engine's, as the Rasta 7.5 stack's steps
+# (stacks/rasta/7.5/steps.py, `hasta apply --stack rasta/7.5`): this script runs each one through it
+# and keeps converge, hplayer2 and seal. What each step does is unchanged, and still told here.
 # Steps (pi-tools#t-058). The image keeps three partitions; flightbox's p4 is laid out per card at the
 # burn, at the card's tail: `bench/burn-batch --flightbox` (image/flightbox-p4), see flightbox/README.md.
 #   converge /opt/Pi-tools → the release tag, via THIS tree's setup/rastaos-update (receipt
@@ -80,11 +83,9 @@ set -uo pipefail
 ROOT=/ BOOT="" DATA="" ONLY="" LIVE=0 TAG="" BUNDLE="" HPBUNDLE="" NOWDE=2.0.5 MIRE="" KEYS="" CHECKOUT=/opt/Pi-tools
 STEPS="converge hplayer2 stamps version units rtc turbo apfix dns wifi nowde media starter"
 EXPLICIT="seal"   # runs only when --only names it
-HOST=player-000 PLAYER=hplayer2@auto HPLAYER=/opt/HPlayer2
+HPLAYER=/opt/HPlayer2
 HERE=${BAKE_HOME:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)}
 ARGS=("$@")
-STAMP=rastaos75
-MASK_UNITS="fake-hwclock.service rpi-eeprom-update.service nfs-client.target rsync.service"
 
 say()  { echo "[bake] $*"; }
 die()  { echo "[bake] FATAL: $*" >&2; exit "${2:-1}"; }
@@ -128,6 +129,8 @@ runs() { if [ -z "$ONLY" ]; then case " $EXPLICIT " in *" $1 "*) return 1 ;; esa
 runs converge && [ -z "$TAG" ] && die "converge needs --tag <release> (or --only without converge)" 2
 runs hplayer2 && [ -z "$TAG" ] && die "hplayer2 needs --tag <release> (or --only without it)" 2
 UPDATER=$HERE/../setup/rastaos-update
+HASTA=$HERE/../bin/hasta
+[ -f "$HASTA" ] || die "$HASTA absent: run the bake from a HastaOS tree" 2
 runs converge && [ ! -f "$UPDATER" ] && die "$UPDATER absent: run the bake from a tree at the release" 2
 
 # --- live: the converge moves a checkout that may hold this very script — run from a copy.
@@ -188,196 +191,20 @@ step_hplayer2() {
   did "hplayer2: $HPLAYER ${head:0:7} → $TAG (${want:0:7}); rollback point ${head:0:7}"
 }
 
-step_stamps() {
-  local f; f=$(r /etc/rastaos-patches.txt)
-  local tmp; tmp=$(mktemp)
-  # keep every line except the anna74 ones before the last, and any previous rastaos75 line
-  local last_anna; last_anna=$(grep -n '^anna74 ' "$f" 2>/dev/null | tail -1 | cut -d: -f1)
-  if [ -f "$f" ]; then
-    awk -v last="${last_anna:-0}" -v st="$STAMP" '
-      $1 == "anna74" && NR != last { next }
-      $1 == st { next }
-      { print }' "$f" > "$tmp"
-  fi
-  echo "$STAMP $(date +%F): RastaOS-7.5 from 7.4 — Pi-tools image/rastaos-bake@$REV (steps: $STEPS)" >> "$tmp"
-  # idempotent: compare without the DATE of our own line — its recipe sha counts, so a re-bake from
-  # a later recipe re-stamps it (the date alone never does)
-  nodate() { sed -E "s/^$STAMP [0-9]{4}-[0-9]{2}-[0-9]{2}:/$STAMP D:/" "$1"; }
-  if [ -f "$f" ] && diff -q <(nodate "$f") <(nodate "$tmp") >/dev/null; then
-    rm -f "$tmp"; return 0
-  fi
-  local before; before=$(grep -c '^anna74 ' "$f" 2>/dev/null)
-  install -m 644 "$tmp" "$f"; rm -f "$tmp"
-  did "stamps: anna74 lines ${before:-0} → $(grep -c '^anna74 ' "$f"), one $STAMP line"
-}
-
-step_version() {
-  # the WHOLE line is the check, sha included: a "starts with 7.5" test let a re-bake from a later
-  # recipe keep the first bake's sha (bench-01 20/11: re-baked at 1c927c4, VERSION still @ecbe41a).
-  local f=$BOOT/VERSION want was
-  want="7.5 -- RastaOS-7.5, baked from a 7.4 card by Pi-tools image/rastaos-bake@$REV"
-  was=$(head -1 "$f" 2>/dev/null)
-  [ "$was" = "$want" ] && return 0
-  printf '%s\n' "$want" > "$f"
-  case $was in *rastaos-bake@*) was="7.5 @${was##*@}" ;; esac
-  did "version: /boot/VERSION '$(printf '%s' "${was:-absent}" | cut -c1-60)' → 7.5 @$REV"
-}
-
-step_units() {
-  local S u w; S=$(r /etc/systemd/system)
-  mkdir -p "$S"
-  for u in $MASK_UNITS; do
-    for w in "$S"/*.wants/"$u" "$S"/*.requires/"$u"; do
-      [ -e "$w" ] || [ -L "$w" ] || continue
-      rm -f "$w"; did "units: $u unwired from $(basename "$(dirname "$w")")"
-    done
-    if [ "$(readlink "$S/$u" 2>/dev/null)" != /dev/null ]; then
-      [ -e "$S/$u" ] && [ ! -L "$S/$u" ] && { say "WARN: $S/$u is a real file, not masking it"; continue; }
-      ln -sfn /dev/null "$S/$u"; did "units: $u masked"
-    fi
-  done
-  # fake-hwclock's hourly save writes /etc on a read-only root: it can only fail
-  local c; c=$(r /etc/cron.hourly/fake-hwclock)
-  [ -e "$c" ] && { rm -f "$c"; did "units: cron.hourly/fake-hwclock removed"; }
-  [ "$LIVE" = 1 ] && [ "$CHANGED" -gt 0 ] && systemctl daemon-reload 2>/dev/null
-  return 0
-}
-
-step_rtc() {
-  local f=$BOOT/config.txt
-  grep -qE '^[[:space:]]*dtoverlay=i2c-rtc' "$f" || return 0
-  sed -i -E 's/^[[:space:]]*(dtoverlay=i2c-rtc.*)$/#\1    # per card: uncomment on a board WITH the DS3231 (rastaos 7.5)/' "$f"
-  did "rtc: i2c-rtc overlay commented out in config.txt (per card)"
-}
-
-step_turbo() {
-  local f=$BOOT/config.txt
-  grep -qE '^[[:space:]]*force_turbo=1' "$f" || return 0
-  sed -i -E 's/^[[:space:]]*(force_turbo=1.*)$/#\1    # per card: uncomment to pin the max clock (rastaos 7.5)/' "$f"
-  did "turbo: force_turbo=1 commented out in config.txt (per card)"
-}
-
-step_apfix() {
-  local S w; S=$(r /etc/systemd/system)
-  for w in "$S"/*.wants/apfix.timer "$S"/*.wants/apfix.service; do
-    [ -e "$w" ] || [ -L "$w" ] || continue
-    rm -f "$w"; did "apfix: ${w##*/} unwired from $(basename "$(dirname "$w")") (opt-in module, off by default)"
-  done
-  [ "$LIVE" = 1 ] && systemctl stop apfix.timer 2>/dev/null
-  return 0
-}
-
-step_dns() {
-  local f want=$'nameserver 1.1.1.1\nnameserver 1.0.0.1'; f=$(r /etc/resolv.conf)
-  if [ "$LIVE" = 1 ]; then
-    local p; for p in openresolv resolvconf; do
-      dpkg -s "$p" >/dev/null 2>&1 && { DEBIAN_FRONTEND=noninteractive dpkg --purge "$p" >/dev/null && did "dns: $p purged"; }
-    done
-  fi
-  if [ -L "$f" ] || [ "$(cat "$f" 2>/dev/null)" != "$want" ]; then
-    rm -f "$f"; printf '%s\n' "$want" > "$f"; chmod 644 "$f"
-    did "dns: static resolv.conf (1.1.1.1, 1.0.0.1)"
-  fi
-  local nm; nm=$(r /etc/NetworkManager)
-  if ! grep -qsx 'dns=none' "$nm/NetworkManager.conf" "$nm"/conf.d/*.conf; then
-    mkdir -p "$nm/conf.d"; printf '[main]\ndns=none\n' > "$nm/conf.d/90-rastaos-dns.conf"
-    did "dns: NetworkManager dns=none (conf.d/90-rastaos-dns.conf)"
-  fi
-}
-
-step_wifi() {
-  local p; for p in "$BOOT/wifi/wint-hotspot.nmconnection" \
-                    "$(r /etc/NetworkManager/system-connections/wint-hotspot.nmconnection)"; do
-    [ -e "$p" ] && { rm -f "$p"; did "wifi: $p removed (fleet hotspot PSK; hotspot off by default)"; }
-  done
-  local d; d=$(r /etc/NetworkManager/system-connections/_anna74-removed)
-  [ -d "$d" ] && { rm -rf "$d"; did "wifi: NM store _anna74-removed/ removed"; }
-  # a scan with a fresh random MAC re-inits the idle dongle's chip and stalls the player (pi-tools#t-064)
-  local f tmp; f=$(r /etc/NetworkManager/conf.d/91-rastaos-scan.conf); tmp=$(mktemp)
-  cat > "$tmp" <<'NM'
-# RastaOS-7.5 (pi-tools#t-064): no MAC re-randomising on Wi-Fi scans.
-# A new random MAC takes the interface down/up; on the idle USB dongles that re-initialises the
-# rtl8192cu/rtl8xxxu chip every ~5 min and stalls the player ~0.5 s (underrun, wallclock burst).
-[device]
-wifi.scan-rand-mac-address=no
-NM
-  if ! cmp -s "$tmp" "$f"; then
-    mkdir -p "${f%/*}" && install -m 644 "$tmp" "$f" || { rm -f "$tmp"; say "wifi: could not write $f"; return 1; }
-    did "wifi: NM scans keep the MAC (91-rastaos-scan.conf)"
-  fi
-  rm -f "$tmp"
-  return 0
-}
-
-step_nowde() {
-  local d f; d=$(r /opt/nowde-tools)
-  [ -d "$d" ] || return 0
-  compgen -G "$d/nowde-$NOWDE-*.bin" >/dev/null || { say "nowde: no $NOWDE image in $d — nothing removed (--nowde <version>)"; return 1; }
-  for f in "$d"/nowde-*.bin; do
-    case "${f##*/}" in "nowde-$NOWDE-"*) continue ;; esac
-    rm -f "$f"; did "nowde: ${f##*/} removed (one firmware: $NOWDE)"
-  done
-  return 0
-}
-
-step_media() {
-  local m=$DATA/media mire=0_mire.mp4 x gone=() size
-  [ -d "$m" ] || { say "media: no $m$([ "$LIVE" = 0 ] && echo " — pass --data <the card's p3, mounted>")"; return 1; }
-  if [ -n "$MIRE" ]; then
-    [ -f "$MIRE" ] && [ -s "$MIRE" ] || { say "media: --mire $MIRE is not a non-empty file — nothing removed"; return 1; }
-  elif [ ! -s "$m/$mire" ]; then
-    say "media: no $mire on the card and no --mire FILE (a 7.3 card's $mire) — nothing removed"; return 1
-  fi
-  while IFS= read -r -d '' x; do gone+=("${x##*/}"); done \
-    < <(find "$m" -mindepth 1 -maxdepth 1 ! -name "$mire" -print0 | sort -z)
-  if [ ${#gone[@]} -gt 0 ]; then
-    size=$(cd "$m" && du -shc -- "${gone[@]}" 2>/dev/null | tail -1 | cut -f1)
-    (cd "$m" && rm -rf -- "${gone[@]}") || { say "media: could not empty $m"; return 1; }
-    did "media: ${#gone[@]} show file(s) removed from $m ($size): $(printf '%s ' "${gone[@]}" | cut -c1-160)"
-  fi
-  if [ -n "$MIRE" ] && ! cmp -s "$MIRE" "$m/$mire"; then
-    install -m 644 "$MIRE" "$m/$mire" || { say "media: could not copy $MIRE"; return 1; }
-    did "media: $mire from $MIRE"
-  fi
-  for x in "$DATA"/hplayer2*.cfg; do
-    [ -f "$x" ] || continue
-    rm -f "$x"; did "media: saved player settings ${x##*/} removed (/boot seeds apply only without one)"
-  done
-  return 0
-}
-
-step_starter() {
-  local f=$BOOT/starter.txt hp tmp x was; hp=$(r "$HPLAYER")
-  [ -f "$f" ] || { say "starter: no $f"; return 1; }
-  if ! grep -qs 'def pick_profile' "$hp/core/engine/bootconf.py"; then
-    say "starter: $HPLAYER ($(git -C "$hp" rev-parse --short HEAD 2>/dev/null || echo 'no checkout')) has no 'auto' profile (hplayer2#t-101) — move it to the release first; starter.txt left as is"
-    return 1
-  fi
-  tmp=$(mktemp)
-  # the FIRST active hostrename@ / hplayer2@ line becomes the generic one, later active ones go; comments stay.
-  # `[ \t]`, never `[[:space:]]`: the card's awk is mawk 1.3.3, which has no POSIX classes — there the
-  # pattern silently never matched, and every run appended one more pair (pi-tools#t-063, bench-01 20/11).
-  # A pair a run like that left behind is one of the "later ones": the next run removes it.
-  if ! awk -v host="hostrename@$HOST" -v player="$PLAYER" '
-    /^[ \t]*hostrename@/ { if (!h++) print host; next }
-    /^[ \t]*hplayer2@/   { if (!p++) print player; next }
-    { print }
-    END { if (!h) print host; if (!p) print player }' "$f" > "$tmp"; then
-    rm -f "$tmp"; say "starter: awk failed on $f — starter.txt left as is"; return 1
-  fi
-  if ! cmp -s "$f" "$tmp"; then
-    was=$(grep -E '^[[:space:]]*(hostrename|hplayer2)@' "$f" | tr '\n' ' ')
-    cat "$tmp" > "$f"; did "starter: '${was% }' → 'hostrename@$HOST $PLAYER'"
-  fi
-  rm -f "$tmp"
-  [ -e "$BOOT/hplayer2.conf" ] && { rm -f "$BOOT/hplayer2.conf"; did "starter: /boot/hplayer2.conf removed (a role file; the base image has none)"; }
-  x=$(r /etc/hostname)
-  [ "$(cat "$x" 2>/dev/null)" = "$HOST" ] || { echo "$HOST" > "$x"; did "starter: /etc/hostname = $HOST"; }
-  x=$(r /etc/hosts)
-  if [ -f "$x" ] && grep -q '^127\.0\.1\.1' "$x" && ! grep -qxP "127\.0\.1\.1\t$HOST" "$x"; then
-    sed -i -E "s/^127\.0\.1\.1.*/127.0.1.1\t$HOST/" "$x"; did "starter: /etc/hosts 127.0.1.1 = $HOST"
-  fi
-  return 0
+# stamps … starter: the engine's (stacks/rasta/7.5/steps.py, #t-010), one `hasta apply --stack
+# rasta/7.5 --only <step>` each. Its lines are the bake's; its « already done » and FAILED are the
+# loop's below, so they are not echoed twice.
+STACK_STEPS="stamps version units rtc turbo apfix dns wifi nowde media starter"
+step_stack() {
+  local s=$1 out rc n
+  out=$(python3 "$HASTA" apply --stack rasta/7.5 --only "$s" --root "$ROOT" --boot "$BOOT" \
+        --data "$DATA" --option "nowde=$NOWDE" ${MIRE:+--option "mire=$MIRE"} 2>&1); rc=$?
+  printf '%s\n' "$out" | grep -vxF -e "step       $s: already done" -e "step       step $s FAILED" \
+    | sed -n 's/^step       /[bake] /p'
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -v '^step \|^stack \|^modules ' | sed 's/^/[bake] /'
+  n=$(printf '%s\n' "$out" | sed -n 's/^stack      rasta\/7\.5: \([0-9]*\) change(s).*/\1/p')
+  CHANGED=$((CHANGED + ${n:-0}))
+  [ "$rc" = 0 ]
 }
 
 step_seal() {
@@ -440,7 +267,7 @@ rc=0
 for s in $STEPS $EXPLICIT; do
   runs "$s" || continue
   before=$CHANGED
-  if ! "step_$s"; then
+  if ! case " $STACK_STEPS " in *" $s "*) step_stack "$s" ;; *) "step_$s" ;; esac; then
     say "step $s FAILED"; rc=1
     [ "$s" = converge ] && { say "converge failed — nothing else baked: fix it, then re-run"; break; }
     continue
