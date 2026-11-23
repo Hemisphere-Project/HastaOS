@@ -145,11 +145,15 @@ def cmd_check(args):
         lines.append("different   %-18s %s: %s" % (f.module, f.path, f.what))
     for f in r.undeclared:
         lines.append("undeclared  %-18s %s: %s" % (f.kind, f.path, f.what))
+    off = [f for f in r.receipts if f.kind != "same"]
+    for f in r.receipts:
+        if f.kind != "same" or f.module is None:
+            lines.append("receipt     %-18s %s: %s" % (f.kind, f.module or "release", f.what))
     for prob in r.problems:
         lines.append("problem     %s" % prob)
-    lines.append("%s: %d module(s)%s; %d different, %d undeclared"
+    lines.append("%s: %d module(s)%s; %d different, %d undeclared, %d receipt(s) off"
                  % (r.facts.root, len(r.modules), ", stack %s" % r.stack if r.stack else "",
-                    len(r.different), len(r.undeclared)))
+                    len(r.different), len(r.undeclared), len(off)))
     _emit(args, r.as_dict(), lines)
     return 0 if r.clean else 1
 

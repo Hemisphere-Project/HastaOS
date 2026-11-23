@@ -1,13 +1,17 @@
 """`hasta check`: what the manifests declare against what a box holds, read-only.
 
-Two parts today (docs/DESIGN.md "hasta check"):
+Three parts (docs/DESIGN.md "hasta check"):
 
-1. **Declared and different** — per module on the box, each declared unit, file or link that is
-   not as declared: a mask missing or extra, an enabled unit with no `*.wants/` link, a disabled
-   one with one, a copy where the module links its unit (or the reverse), a file or link absent.
+1. **Declared and different** — per module on the box, each declared unit, file, link, package
+   or line that is not as declared: a mask missing or extra, an enabled unit with no `*.wants/`
+   link, a disabled one with one, a copy where the module links its unit (or the reverse), a file
+   or link absent, a package not installed, a `cmdline`/`config`/`fstab` line present or absent.
 2. **Undeclared** — every entry of `/etc/systemd/system` that no manifest of the tree claims in
    the form it has: a mask, a `*.wants/` or `*.requires/` link, an alias, a drop-in, a plain
    unit file, a link to a unit file.
+3. **Receipts** — each module receipt's fingerprint (`/etc/pi-tools-modules.txt`, written by
+   `setup/module-manifest`) against the same fingerprint of the tree's module directory, and the
+   release receipt's commit (`/etc/rastaos-release`) against the tree's history.
 
 Unit states are read from the links on disk, so no running systemd is needed and `--root` reads a
 card's tree the same way. The box's stack overlay (`stacks/<name>/<revision>/`, from the facts)
@@ -17,8 +21,10 @@ Standard library only; runs on Python 3.7.
 """
 
 import filecmp
+import hashlib
 import os
 import stat
+import subprocess
 
 from hasta import facts as facts_mod
 from hasta import legacy, manifest
@@ -41,18 +47,21 @@ class Finding(object):
 
 
 class Report(object):
-    def __init__(self, facts, modules, stack, different, undeclared, problems):
+    def __init__(self, facts, modules, stack, different, undeclared, receipts, problems):
         self.facts, self.modules, self.stack = facts, modules, stack
         self.different, self.undeclared, self.problems = different, undeclared, problems
+        self.receipts = receipts
 
     @property
     def clean(self):
-        return not self.different and not self.undeclared
+        return not (self.different or self.undeclared
+                    or [f for f in self.receipts if f.kind != "same"])
 
     def as_dict(self):
         return {"root": self.facts.root, "modules": list(self.modules), "stack": self.stack,
                 "different": [f.as_dict() for f in self.different],
                 "undeclared": [f.as_dict() for f in self.undeclared],
+                "receipts": [f.as_dict() for f in self.receipts],
                 "problems": list(self.problems), "clean": self.clean}
 
 
@@ -65,6 +74,8 @@ class Decl(object):
         self.units = list(res.get("units") or [])
         self.files = list(res.get("files") or [])
         self.links = list(res.get("links") or [])
+        self.lines = list(res.get("lines") or [])
+        self.packages = dict(res.get("packages") or {})
 
 
 def _stack_dir(tree, facts):
@@ -207,6 +218,74 @@ def check_link(root, owner, l):
                                   % (target, want))]
 
 
+def installed(root):
+    """The packages dpkg says are installed under `root`, or None without a dpkg status."""
+    text = facts_mod.read_text(root, "/var/lib/dpkg/status")
+    if text is None:
+        return None
+    out, name = set(), None
+    for ln in text.splitlines():
+        if ln.startswith("Package:"):
+            name = ln.split(":", 1)[1].strip()
+        elif ln.startswith("Status:") and name and ln.split()[-1] == "installed":
+            out.add(name.split(":")[0])
+    return out
+
+
+def check_packages(owner, packages, base, have):
+    out = []
+    for key in sorted(packages):
+        if key not in ("any", base):
+            continue
+        for pkg in packages[key]:
+            if pkg not in have:
+                out.append(Finding("different", owner, "package " + pkg, "not installed"))
+    return out
+
+
+def _config_lines(text, section):
+    """config.txt's lines under `[section]` (before any header counts as [all])."""
+    cur, out = "all", []
+    for ln in text.splitlines():
+        t = ln.strip()
+        if t.startswith("[") and t.endswith("]"):
+            cur = t[1:-1].strip()
+            continue
+        if t and not t.startswith("#") and (section is None or cur == section):
+            out.append(t)
+    return out
+
+
+def check_line(root, owner, boot, l):
+    """A declared line of cmdline.txt, config.txt or fstab, present or absent as declared.
+    cmdline and config lines hold only where the box has the file (a Pi)."""
+    want, present = l["line"], l.get("present", True)
+    if l["file"] == "fstab":
+        path = "/etc/fstab"
+        text = facts_mod.read_text(root, path)
+        if text is None:
+            return [Finding("different", owner, path, "missing, a line is declared")] \
+                if present else []
+        fields = want.split()
+        have = any(ln.split() == fields for ln in text.splitlines())
+    else:
+        if not boot:
+            return []
+        path = "%s/%s.txt" % (boot.rstrip("/"), l["file"])
+        text = facts_mod.read_text(root, path)
+        if text is None:
+            return []
+        if l["file"] == "cmdline":
+            have = want in text.split()
+        else:
+            have = want.strip() in _config_lines(text, l.get("section"))
+    if have == present:
+        return []
+    where = " [%s]" % l["section"] if l.get("section") else ""
+    return [Finding("different", owner, path, "%r%s %s, declared %s" % (
+        want, where, "present" if have else "absent", "present" if present else "absent"))]
+
+
 def claims(decls, stack):
     """units: name -> [(owner, unit table)]; files: box path -> owner. Every manifest of the
     tree claims, on the box or not: undeclared means no manifest at all says it."""
@@ -301,6 +380,93 @@ def entries(root):
     return out
 
 
+# -- receipts -------------------------------------------------------------------------------
+
+RELEASE = "/etc/rastaos-release"
+
+
+def _git(tree, *args):
+    try:
+        p = subprocess.run(["git", "-C", tree] + list(args), stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def _files(d):
+    """The module directory's files as setup/module-manifest lists them: what git sees inside a
+    checkout (tracked, and untracked not ignored), else everything but caches and *.pyc."""
+    out = _git(d, "ls-files", "-z", "-co", "--exclude-standard", "--", ".")
+    if out is not None:
+        return [f.decode("utf-8", "surrogateescape") for f in out.split(b"\0") if f]
+    found = []
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames[:] = [x for x in dirnames if x not in ("__pycache__", "node_modules", ".venv")]
+        for f in filenames:
+            p = os.path.join(dirpath, f)
+            if not f.endswith(".pyc") and os.path.isfile(p) and not os.path.islink(p):
+                found.append(os.path.relpath(p, d))
+    return found
+
+
+def fingerprint(d):
+    """setup/module-manifest's fingerprint: 12 hex of sha1 over the sorted `<git-blob-id> <path>`
+    lines of the directory's files."""
+    lines = []
+    for rel in _files(d):
+        p = os.path.join(d, rel)
+        if not os.path.isfile(p):
+            continue  # tracked but deleted on disk
+        with open(p, "rb") as fh:
+            body = fh.read()
+        size = os.lstat(p).st_size  # module-manifest's `stat -c %s` does not follow a link
+        blob = hashlib.sha1(b"blob %d\0" % size + body).hexdigest()
+        lines.append(("%s %s\n" % (blob, rel)).encode("utf-8", "surrogateescape"))
+    return hashlib.sha1(b"".join(sorted(lines))).hexdigest()[:12]
+
+
+def check_receipts(tree, root, receipts_path, modules, on_box):
+    """Per module: its receipt against the tree's fingerprint; and the release receipt's commit
+    against the tree's history. Kinds: same, differs, unrecorded (on the box, no receipt),
+    not-in-tree (a receipt for a module this tree lacks), release."""
+    if receipts_path is None:
+        receipts_path = facts_mod._join(root, plan_mod.RECEIPTS)
+    receipts = plan_mod.read_receipts(receipts_path)
+    out = []
+    for n in sorted(set(receipts) | (set(on_box) & set(modules))):
+        box = "%s %s" % (plan_mod.RECEIPTS, n)
+        if n not in modules:
+            out.append(Finding("receipts", n, box, "a receipt, and no such module in the tree",
+                               "not-in-tree"))
+            continue
+        if n not in receipts:
+            out.append(Finding("receipts", n, box, "on the box, no receipt", "unrecorded"))
+            continue
+        have, want = receipts[n]["fingerprint"], fingerprint(modules[n].path)
+        if have == want:
+            out.append(Finding("receipts", n, box, "the tree's version (%s)" % want, "same"))
+        else:
+            out.append(Finding("receipts", n, box, "receipt %s, tree %s (from %s)"
+                               % (have, want, receipts[n]["source"] or "-"), "differs"))
+    text = facts_mod.read_text(root, RELEASE)
+    if text:
+        rel = facts_mod.parse_kv(text)
+        commit = rel.get("PITOOLS_COMMIT", "")
+        head = (_git(tree, "rev-parse", "--short", "HEAD") or b"").decode().strip()
+        if not head:
+            what, kind = "%s at %s; the tree is not a checkout" % (
+                rel.get("RASTAOS_TAG", "?"), commit or "?"), "release"
+        elif commit and _git(tree, "merge-base", "--is-ancestor", commit, "HEAD") is not None:
+            what, kind = "%s at %s, in the tree's history (tree at %s)" % (
+                rel.get("RASTAOS_TAG", "?"), commit, head), "same"
+        else:
+            what, kind = "%s at %s, not in the tree's history (tree at %s)" % (
+                rel.get("RASTAOS_TAG", "?"), commit or "?", head), "release"
+        out.append(Finding("receipts", None, RELEASE, what, kind))
+    return out
+
+
 def make(tree, root="/", receipts_path=None, select=None, platform=None, apps=(),
          only=None):
     """The check of the box at `root` against the modules of `tree`. Raises ValueError when
@@ -323,9 +489,18 @@ def make(tree, root="/", receipts_path=None, select=None, platform=None, apps=()
         on_box = [only]
 
     stack_units = dict((u["name"], u) for u in stack.units) if stack else {}
+    boot = (facts.values.get("boot") or {}).get("path")
+    base = (facts.values.get("base") or {}).get("name")
+    have = installed(facts.root)
+    if have is None:
+        problems.append("no /var/lib/dpkg/status: packages not checked")
     different = []
     for n in on_box:
         d = decls[n]
+        for l in d.lines:
+            different += check_line(facts.root, n, boot, l)
+        if have is not None:
+            different += check_packages(n, d.packages, base, have)
         for u in d.units:
             if u["name"] in stack_units:
                 continue  # the stack declares after the modules and wins
@@ -335,6 +510,10 @@ def make(tree, root="/", receipts_path=None, select=None, platform=None, apps=()
         for l in d.links:
             different += check_link(facts.root, n, l)
     if stack is not None and only is None:
+        for l in stack.lines:
+            different += check_line(facts.root, stack.name, boot, l)
+        if have is not None:
+            different += check_packages(stack.name, stack.packages, base, have)
         for u in stack.units:
             different += check_unit(facts.root, stack.name, u)
         for f in stack.files:
@@ -360,5 +539,9 @@ def make(tree, root="/", receipts_path=None, select=None, platform=None, apps=()
             if other:
                 what += " in this form; declared by %s" % ", ".join(other)
             undeclared.append(Finding("undeclared", None, box, what, k))
+    receipts = []
+    if only is None:
+        receipts = check_receipts(tree, facts.root, receipts_path,
+                                  legacy.discover(tree, apps), on_box)
     return Report(facts, on_box, stack.name if stack else None, different, undeclared,
-                  problems)
+                  receipts, problems)
