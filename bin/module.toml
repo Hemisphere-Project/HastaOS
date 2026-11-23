@@ -1,0 +1,46 @@
+# What the engine itself leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# bin/ holds the engine's entry point and its one unit, so its manifest sits here, beside them.
+# No module.ini: neither the installer nor converge lays it down — `hasta apply` puts both in
+# place before its first row (hasta/apply.py, LegacyRunner.prepare), by the installer's own
+# link_bin, install_service and enable_service. Paths in `source` and a relative link `target`
+# are relative to this directory.
+schema = 1
+undeclared = [
+  "installed by `hasta apply` itself, not by setup.sh: a box set up and never updated has neither the link nor the unit, and `check` does not count it on the box until one of them is there",
+]
+
+[module]
+id = "hasta"
+version = "0.1"
+layer = "core"
+summary = "The engine on the PATH, and the boot unit that finishes an interrupted apply"
+
+[[resources.links]]
+path = "/usr/local/bin/hasta"
+target = "hasta"
+
+[[resources.units]]
+name = "hasta-resume.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "hasta-resume.service"
+
+[[writes]]
+path = "/etc/hasta/receipts"
+when = "update"
+summary = "one receipt per module an apply ran or recorded"
+
+[[writes]]
+path = "/data/.hasta-apply"
+when = "update"
+summary = "the resume marker, from the first row until every module ended applied"
+
+[[writes]]
+path = "/var/lib/hasta/apply-pending"
+when = "update"
+summary = "the resume marker on a box with no /data"
+
+[[seal]]
+path = "/data/.hasta-apply"
+action = "delete"
+summary = "an image never carries a half-done apply"

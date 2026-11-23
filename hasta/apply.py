@@ -23,6 +23,7 @@ runner is given (tests). Standard library only; runs on Python 3.7.
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -36,6 +37,10 @@ MARKER_NO_DATA = "/var/lib/hasta/apply-pending"
 RUNS = ("upgrade", "script", "install")          # the actions that run something
 RECEIPTED = RUNS + ("linked",)                    # the actions that leave a receipt
 SKIP_DIRS = ("__pycache__", "node_modules", ".venv")
+ENGINE_DIR = "bin"                                # the engine's entry point and its unit
+ENGINE_LINK = "/usr/local/bin/hasta"
+RESUME_UNIT = "hasta-resume.service"
+UNIT_DIR = "/etc/systemd/system"
 
 
 # -- fingerprint: setup/module-manifest's, in Python ----------------------------------------
@@ -112,6 +117,80 @@ def current(old, new):
     return all(old.get(k) == new[k] for k in ("FINGERPRINT", "VERSION", "OPTIONS"))
 
 
+# -- the engine's own pieces -----------------------------------------------------------------
+
+def engine_missing(tree, root="/"):
+    """What bin/module.toml declares that the box does not hold yet, as the installer verbs
+    that lay it down: [("link_bin", src) | ("install_service", src) | ("enable_service", name)].
+    Empty on a box that already holds it: nothing to do, nothing written."""
+    d = os.path.join(os.path.abspath(tree), ENGINE_DIR)
+    out = []
+    if not os.path.isfile(os.path.join(d, RESUME_UNIT)):
+        return out  # a tree from before the unit: nothing of it to lay down
+    src = os.path.join(d, "hasta")
+    if _readlink(facts_mod._join(root, ENGINE_LINK)) != src:
+        out.append(("link_bin", src))
+    unit = os.path.join(d, RESUME_UNIT)
+    if _readlink(facts_mod._join(root, "%s/%s" % (UNIT_DIR, RESUME_UNIT))) != unit:
+        out.append(("install_service", unit))
+    wants = "%s/multi-user.target.wants/%s" % (UNIT_DIR, RESUME_UNIT)
+    if not os.path.lexists(facts_mod._join(root, wants)):
+        out.append(("enable_service", RESUME_UNIT))
+    return out
+
+
+def _readlink(path):
+    try:
+        return os.readlink(path)
+    except OSError:
+        return None
+
+
+# -- the read-only root ----------------------------------------------------------------------
+
+def root_readonly(mounts="/proc/self/mounts"):
+    """True when / is mounted read-only (the last / line of the table is the one in force)."""
+    ro = False
+    try:
+        with open(mounts) as f:
+            for ln in f:
+                parts = ln.split()
+                if len(parts) >= 4 and parts[1] == "/":
+                    ro = "ro" in parts[3].split(",")
+    except (IOError, OSError):
+        return False
+    return ro
+
+
+class RootRW(object):
+    """rorw's bracket around a standalone apply, taken the way setup/rastaos-update takes it: on
+    a read-only root, `rw` for the run and `ro` after (rorw counts holders). A writable root is
+    left alone — a caller holds it (rastaos-update, a shell after `rw`) or the box is not rorw —
+    and `ro` is never run for a `rw` this apply did not take: on a writable root with rorw's
+    count at 0 it would remount read-only under the caller. HASTA_NO_RORW=1 skips the bracket."""
+
+    def __init__(self, mounts="/proc/self/mounts"):
+        self.mounts, self.took = mounts, False
+
+    def take(self):
+        """False when the root is read-only and `rw` could not remount it."""
+        if (os.environ.get("HASTA_NO_RORW") or not shutil.which("rw")
+                or not shutil.which("ro") or not root_readonly(self.mounts)):
+            return True
+        if subprocess.run(["rw"], stdout=subprocess.DEVNULL).returncode != 0:
+            return False
+        self.took = True
+        return True
+
+    def give(self):
+        """False when `ro` could not remount the root (something still holds it)."""
+        if not self.took:
+            return True
+        self.took = False
+        return subprocess.run(["ro"], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+
+
 # -- runners ---------------------------------------------------------------------------------
 
 class LegacyRunner(object):
@@ -120,11 +199,15 @@ class LegacyRunner(object):
     def __init__(self, tree):
         self.tree = tree
         self._installer = None
+        self._reload = None       # setup.utils, when prepare() relinked the unit
+
+    def _path(self):
+        if self.tree not in sys.path:
+            sys.path.insert(0, self.tree)
 
     def _setup(self):
         if self._installer is None:
-            if self.tree not in sys.path:
-                sys.path.insert(0, self.tree)
+            self._path()
             os.environ["DEBIAN_FRONTEND"] = "noninteractive"
             from setup import config, detect, installer, utils
             platinfo = detect.detect()
@@ -140,9 +223,24 @@ class LegacyRunner(object):
         installer, platinfo, cfg, _ = self._setup()
         return bool(installer.install_module(m.name, platinfo, cfg))
 
+    def prepare(self):
+        """Before the first row: `hasta` on the PATH and the resume unit enabled, by the
+        installer's own verbs, each only where the box differs (a second apply writes nothing)."""
+        todo = engine_missing(self.tree)
+        if not todo:
+            return
+        self._path()
+        from setup import utils
+        for verb, arg in todo:
+            getattr(utils, verb)(arg)
+        if any(verb == "install_service" for verb, _ in todo):
+            self._reload = utils
+
     def finish(self):
         if self._installer is not None:
             self._installer[3].daemon_reload()
+        elif self._reload is not None:
+            self._reload.daemon_reload()
 
 
 # -- apply -----------------------------------------------------------------------------------
@@ -184,6 +282,9 @@ def apply(tree, root="/", receipts_path=None, select=None, platform=None, apps=(
     runner = runner or LegacyRunner(tree)
 
     if not dry_run:
+        prepare = getattr(runner, "prepare", None)
+        if prepare:
+            prepare()
         req = dict(request or {}, started_at=stamp)
         _write_atomic(marker, json.dumps(req, sort_keys=True) + "\n")
 

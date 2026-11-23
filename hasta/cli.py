@@ -153,12 +153,27 @@ def cmd_apply(args):
         receipts, platform, apps, force = args.receipts, args.platform, args.app or (), args.force
     request = {"tree": tree, "modules": select, "receipts": receipts, "platform": platform,
                "apps": [os.path.abspath(a) for a in apps], "force": force}
+    # On a read-only root, rorw's `rw` for the run and `ro` after; a writable root is a caller's.
+    rw = None
+    if not args.dry_run and os.path.realpath(root) == "/":
+        rw = apply_mod.RootRW()
+        if not rw.take():
+            print("hasta apply: could not remount the root read-write: nothing ran",
+                  file=sys.stderr)
+            return 1
+    r = None
     try:
         r = apply_mod.apply(tree, root, receipts_path=receipts, select=select, platform=platform,
                             apps=request["apps"], dry_run=args.dry_run, force=force,
                             resumed=args.resume, request=request)
     except ValueError as exc:
         print("hasta apply: %s" % exc, file=sys.stderr)
+    finally:
+        held = rw is not None and not rw.give()
+    if held:
+        print("hasta apply: the root stayed read-write: `ro` could not remount it (see"
+              " `fuser -vm /`), then run `ro`", file=sys.stderr)
+    if r is None:
         return 2
     lines = ["%-10s %-18s %s" % (s["action"], s["module"], s["why"]) for s in r.steps]
     for s in r.steps:
@@ -172,7 +187,7 @@ def cmd_apply(args):
     if r.failed:
         lines.append("apply: failed: %s" % " ".join(r.failed))
     _emit(args, r.as_dict(), lines)
-    return 1 if r.failed else 0
+    return 1 if r.failed or held else 0
 
 
 def cmd_check(args):

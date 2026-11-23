@@ -1,0 +1,19 @@
+[Unit]
+Description=Finish an interrupted hasta apply (the marker it left names what was asked)
+Documentation=file:///opt/Pi-tools/docs/DESIGN.md
+# hasta#t-009. `hasta apply` writes the marker before its first row and removes it when every
+# module ended applied, so a normal boot skips this unit and writes nothing. Either marker:
+# /data/.hasta-apply, or /var/lib/hasta/apply-pending on a box with no /data (hasta/apply.py).
+ConditionPathExists=|/data/.hasta-apply
+ConditionPathExists=|/var/lib/hasta/apply-pending
+# /data mounted, and the clock past rorw's fake-clock floor before anything is stamped.
+After=local-fs.target fake-clock.service
+
+[Service]
+Type=oneshot
+# On a read-only root the apply takes `rw` for the run and gives it back with `ro` (rorw).
+# A oneshot has no start timeout: a module install is not cut off half-way.
+ExecStart=/usr/local/bin/hasta apply --resume
+
+[Install]
+WantedBy=multi-user.target

@@ -198,10 +198,23 @@ writers (the installer, `rastaos-update`).
 Resume: while it runs, `/data/.hasta-apply` holds the request (tree, module set, receipts,
 platform, apps); it is removed when every module ended applied. `hasta apply --resume` reruns
 the request a marker holds, and does nothing without one: the receipts left by the modules that
-finished make the rerun run only the rest. Exit 0 applied or nothing to do, 1 a module failed, 2
-usage. `tests/test_apply.py`: the receipts, a second apply that changes nothing, a changed
-module that runs again alone, an apply killed half-way that completes on resume, `--dry-run`
-writing nothing, and the fingerprint equal to `module-manifest fingerprint`.
+finished make the rerun run only the rest. At boot, `bin/hasta-resume.service` (a oneshot,
+`ConditionPathExists=` either marker, so a normal boot skips it) runs `hasta apply --resume`.
+`bin/module.toml` declares that unit and `/usr/local/bin/hasta`, and the legacy runner puts both
+in place before its first row, by the installer's `link_bin`, `install_service` and
+`enable_service`, only where the box differs: every box that applies carries the unit, and
+`check` counts the engine's module on the box once one of them is there.
+
+Read-only root: run on its own (the boot unit, a shell), `hasta apply` takes rorw's `rw` for the
+run and gives it back with `ro`, as `rastaos-update` does; a root already writable is a caller's
+(`rastaos-update` → `converge.py`, a shell after `rw`) and is left as it is, since an `ro` for a
+`rw` this run did not take would remount it under the caller. `HASTA_NO_RORW=1` skips the
+bracket. Exit 0 applied or nothing to do, 1 a module failed or the root could not be remounted
+(read-write: nothing ran; back read-only: the run says what to do), 2 usage.
+`tests/test_apply.py`: the receipts, a second apply that changes nothing, a changed module that
+runs again alone, an apply killed half-way that completes on resume, `--dry-run` writing
+nothing, the fingerprint equal to `module-manifest fingerprint`, the unit and its manifest
+against the engine's markers and paths, and the bracket.
 
 ### `hasta check [--root DIR [--boot DIR] [--data DIR] | --image FILE] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
 

@@ -268,3 +268,216 @@ class ConvergeCalls(unittest.TestCase):
                             "--platform", "pi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            env=dict(ENV, PITOOLS_ROOT=d))
         self.assertEqual(p.returncode, 0, p.stderr)
+
+
+# -- the boot unit that resumes (#t-009 ③) ---------------------------------------------------
+
+ENGINE = os.path.join(REPO, apply_mod.ENGINE_DIR)
+UNIT = os.path.join(ENGINE, apply_mod.RESUME_UNIT)
+
+
+def unit_lines(key):
+    with open(UNIT) as f:
+        return [ln.split("=", 1)[1] for ln in f.read().splitlines() if ln.startswith(key + "=")]
+
+
+def lay_down(tree, box):
+    """What link_bin, install_service and `systemctl enable` leave, under a temporary root."""
+    d = os.path.join(os.path.abspath(tree), apply_mod.ENGINE_DIR)
+    units = os.path.join(box, apply_mod.UNIT_DIR.lstrip("/"))
+    os.makedirs(os.path.join(box, "usr/local/bin"), exist_ok=True)
+    os.makedirs(os.path.join(units, "multi-user.target.wants"), exist_ok=True)
+    os.symlink(os.path.join(d, "hasta"), os.path.join(box, apply_mod.ENGINE_LINK.lstrip("/")))
+    os.symlink(os.path.join(d, apply_mod.RESUME_UNIT), os.path.join(units, apply_mod.RESUME_UNIT))
+    os.symlink("%s/%s" % (apply_mod.UNIT_DIR, apply_mod.RESUME_UNIT),
+               os.path.join(units, "multi-user.target.wants", apply_mod.RESUME_UNIT))
+
+
+class ResumeUnit(unittest.TestCase):
+
+    def test_it_starts_on_either_marker_only(self):
+        self.assertEqual(sorted(unit_lines("ConditionPathExists")),
+                         sorted("|" + m for m in (apply_mod.MARKER, apply_mod.MARKER_NO_DATA)))
+        self.assertEqual(unit_lines("ExecStart"), [apply_mod.ENGINE_LINK + " apply --resume"])
+        self.assertEqual(unit_lines("Type"), ["oneshot"])
+
+    def test_its_manifest_declares_what_apply_lays_down(self):
+        from hasta import manifest
+        m = manifest.load(os.path.join(ENGINE, manifest.MANIFEST_NAME))
+        self.assertEqual([str(e) for e in m.errors], [])
+        self.assertEqual((m.id, m.data["module"]["layer"]), ("hasta", "core"))
+        res = m.data["resources"]
+        self.assertEqual([(l["path"], l["target"]) for l in res["links"]],
+                         [(apply_mod.ENGINE_LINK, "hasta")])
+        self.assertEqual([(u["name"], u["state"], u["wanted_by"], u["source"])
+                          for u in res["units"]],
+                         [(apply_mod.RESUME_UNIT, "enabled", ["multi-user.target"],
+                           apply_mod.RESUME_UNIT)])
+        self.assertEqual(unit_lines("WantedBy"), ["multi-user.target"])
+        self.assertIn("hasta", dict((x.id, x) for x in manifest.discover(REPO)))
+
+    def test_a_bare_box_gets_all_three_then_nothing(self):
+        box = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, box)
+        self.assertEqual([v for v, _ in apply_mod.engine_missing(REPO, box)],
+                         ["link_bin", "install_service", "enable_service"])
+        self.assertEqual(apply_mod.engine_missing(REPO, box)[1][1], UNIT)
+        lay_down(REPO, box)
+        self.assertEqual(apply_mod.engine_missing(REPO, box), [])
+
+    def test_a_unit_linked_into_another_tree_is_relinked_alone(self):
+        box, other = tempfile.mkdtemp(), tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, box)
+        self.addCleanup(shutil.rmtree, other)
+        lay_down(REPO, box)
+        os.makedirs(os.path.join(other, "bin"))
+        open(os.path.join(other, "bin", apply_mod.RESUME_UNIT), "w").close()
+        self.assertEqual([v for v, _ in apply_mod.engine_missing(other, box)],
+                         ["link_bin", "install_service"])
+
+    def test_a_tree_without_the_unit_lays_nothing(self):
+        tree, box = tempfile.mkdtemp(), tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tree)
+        self.addCleanup(shutil.rmtree, box)
+        self.assertEqual(apply_mod.engine_missing(tree, box), [])
+
+    def test_prepare_runs_before_the_marker_and_never_on_a_dry_run(self):
+        t = Apply("test_cli")
+        t.setUp()
+        self.addCleanup(t.doCleanups)
+        seen = []
+
+        class Runner(FakeRunner):
+            def prepare(self):
+                seen.append(os.path.exists(apply_mod.marker_path(t.box)))
+
+        t.apply(Runner(t.box), dry_run=True)
+        self.assertEqual(seen, [])
+        t.apply(Runner(t.box))
+        self.assertEqual(seen, [False])
+
+    def test_check_claims_the_unit_once_it_is_there(self):
+        from hasta import check
+        from tests.test_check import rc_box
+        tmp, box = rc_box()
+        self.addCleanup(shutil.rmtree, tmp)
+        lay_down(REPO, box)
+        report = check.make(REPO, box)
+        self.assertIn("hasta", report.modules)
+        named = [f for f in report.different + report.undeclared if "hasta" in f.path]
+        self.assertEqual([f.as_dict() for f in named], [])
+
+
+class RootBracket(unittest.TestCase):
+    """rorw's `rw` / `ro` around a standalone apply, taken as setup/rastaos-update takes it."""
+
+    def setUp(self):
+        from unittest import mock
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bin = os.path.join(self.tmp, "bin")
+        self.log = os.path.join(self.tmp, "log")
+        self.mounts = os.path.join(self.tmp, "mounts")
+        for name in ("rw", "ro"):
+            self.tool(name, 0)
+        env = {"PATH": self.bin + os.pathsep + os.environ.get("PATH", "")}
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("HASTA_NO_RORW", None)
+
+    def tool(self, name, code):
+        write(os.path.join(self.bin, name),
+              "#!/bin/sh\necho %s >> '%s'\nexit %d\n" % (name, self.log, code))
+        os.chmod(os.path.join(self.bin, name), 0o755)
+
+    def root(self, opts):
+        write(self.mounts, "proc /proc proc rw 0 0\n/dev/root / ext4 %s 0 0\n" % opts)
+
+    def calls(self):
+        if not os.path.exists(self.log):
+            return []
+        with open(self.log) as f:
+            return f.read().split()
+
+    def test_a_read_only_root_is_taken_and_given_back(self):
+        self.root("ro,noatime")
+        b = apply_mod.RootRW(self.mounts)
+        self.assertTrue(b.take())
+        self.assertEqual(self.calls(), ["rw"])
+        self.assertTrue(b.give())
+        self.assertTrue(b.give())   # once only
+        self.assertEqual(self.calls(), ["rw", "ro"])
+
+    def test_a_writable_root_is_the_callers(self):
+        self.root("rw,noatime")
+        b = apply_mod.RootRW(self.mounts)
+        self.assertTrue(b.take())
+        self.assertTrue(b.give())
+        self.assertEqual(self.calls(), [])
+
+    def test_the_last_line_for_the_root_is_the_one_in_force(self):
+        write(self.mounts, "/dev/root / ext4 ro 0 0\n/dev/root / ext4 rw,relatime 0 0\n")
+        self.assertFalse(apply_mod.root_readonly(self.mounts))
+        self.root("ro")
+        self.assertTrue(apply_mod.root_readonly(self.mounts))
+        self.assertFalse(apply_mod.root_readonly(os.path.join(self.tmp, "none")))
+
+    def test_failures_are_said(self):
+        self.root("ro")
+        self.tool("ro", 1)
+        b = apply_mod.RootRW(self.mounts)
+        self.assertTrue(b.take())
+        self.assertFalse(b.give())
+        self.tool("rw", 1)
+        b = apply_mod.RootRW(self.mounts)
+        self.assertFalse(b.take())
+        self.assertTrue(b.give())   # nothing taken, nothing to give back
+
+    def test_no_rorw_or_switched_off_is_no_bracket(self):
+        self.root("ro")
+        os.environ["HASTA_NO_RORW"] = "1"
+        self.assertTrue(apply_mod.RootRW(self.mounts).take())
+        del os.environ["HASTA_NO_RORW"]
+        os.remove(os.path.join(self.bin, "ro"))
+        os.environ["PATH"] = self.bin
+        self.assertTrue(apply_mod.RootRW(self.mounts).take())
+        self.assertEqual(self.calls(), [])
+
+    def cli(self, take, give):
+        """`hasta apply` on the running box, the engine and the bracket stood in for."""
+        from unittest import mock
+        from hasta import cli
+        calls = []
+
+        class Plan(object):
+            def as_dict(self):
+                return {}
+
+        class Bracket(object):
+            def take(self):
+                calls.append("rw")
+                return take
+
+            def give(self):
+                calls.append("ro")
+                return give
+
+        def fake(*a, **kw):
+            calls.append("apply")
+            return apply_mod.Result(Plan(), [], [], False)
+        err = io.StringIO()
+        with mock.patch.object(apply_mod, "apply", fake), \
+                mock.patch.object(apply_mod, "RootRW", Bracket), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cli.main(["apply", "--modules", "alpha"])
+        return code, calls, err.getvalue()
+
+    def test_the_verb_brackets_the_running_box(self):
+        self.assertEqual(self.cli(True, True)[:2], (0, ["rw", "apply", "ro"]))
+        code, calls, err = self.cli(True, False)
+        self.assertEqual((code, calls), (1, ["rw", "apply", "ro"]))
+        self.assertIn("stayed read-write", err)
+        code, calls, err = self.cli(False, True)
+        self.assertEqual((code, calls), (1, ["rw"]))
+        self.assertIn("nothing ran", err)
