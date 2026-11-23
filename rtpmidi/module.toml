@@ -1,0 +1,32 @@
+# What rtpmidi leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["boot.starter"]
+undeclared = [
+  "raveloxmidi is a committed 32-bit ARM binary run from this directory, not in module.ini's bins: the module works on armhf only",
+  "ravelox.conf names the ALSA input hw:1,0,0",
+]
+
+[module]
+id = "rtpmidi"
+version = "1.0"
+layer = "feature"
+summary = "RTP MIDI (CoreMIDI compatible), through raveloxmidi"
+
+[resources.packages]
+any = ["alsa-utils"]
+
+[[resources.links]]
+path = "/usr/local/bin/rtpmidi"
+target = "rtpmidi"
+
+# Runs from a starter.txt line (`rtpmidi`).
+[[resources.units]]
+name = "rtpmidi.service"
+state = "disabled"
+source = "rtpmidi.service"
+
+[[writes]]
+path = "/tmp/ravelox.conf"
+when = "event"
+summary = "the config raveloxmidi reads, at each start"

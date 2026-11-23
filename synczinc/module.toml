@@ -1,0 +1,47 @@
+# What synczinc leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.data", "boot.starter"]
+undeclared = [
+  "the installer's hook adds the syncthing apt repository and its key (/etc/apt/sources.list.d/syncthing.list, /usr/share/keyrings/syncthing-archive-keyring.gpg) from the network, then installs syncthing; schema 1 has no apt source",
+  "the hook makes a uv venv at /data/var/synczinc/venv and installs the python `syncthing` library into it, from the network, unpinned (master mode only)",
+  "peer.sh calls avahi-publish-service, from no declared package",
+  "`unsync` seds starter.txt without rw",
+  "a peer wipes /data/sync when the drive id changes, the first boot of an image without /data/var/sync-id included (a master keeps its copy)",
+]
+
+[module]
+id = "synczinc"
+version = "1.0"
+layer = "feature"
+summary = "Syncthing replication of /data/sync, with a master that introduces its peers"
+
+[[resources.links]]
+path = "/usr/local/bin/synczinc"
+target = "synczinc"
+
+# Runs from a starter.txt line (`synczinc@peer` or `synczinc@master`).
+[[resources.units]]
+name = "synczinc@.service"
+state = "disabled"
+source = "synczinc@.service"
+
+[[state]]
+path = "/data/sync"
+summary = "the replicated folder"
+
+[[state]]
+path = "/data/var/syncthing"
+summary = "syncthing's home: its config and the device keys"
+
+[[state]]
+path = "/data/var/sync-id"
+summary = "the drive id its clone detector compares at start"
+
+[[state]]
+path = "/data/var/synczinc-demoted"
+summary = "a master's demotion marker"
+
+[[state]]
+path = "/data/var/synczinc"
+summary = "the master's venv"

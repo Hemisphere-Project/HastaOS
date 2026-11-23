@@ -1,0 +1,36 @@
+# What apfix leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+# Opt-in, off by default: no installer group runs it unless a fleet asks for `apfix`.
+# The Rasta 7.5 overlay unwires the timer (stacks/rasta/7.5).
+schema = 1
+undeclared = [
+  "the interface is hard-coded, IF=wint; it restarts hostapd@wint even where no AP is configured",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+]
+
+[module]
+id = "apfix"
+version = "1.0"
+layer = "feature"
+summary = "Stale-hotspot guard: restart hostapd@wint when no station is associated"
+
+[supports]
+machine = ["rpi*"]
+
+# A COPY, not a link: a new tag reaches it only by running install.sh again.
+[[resources.files]]
+path = "/usr/local/sbin/apfix"
+source = "apfix"
+mode = "0755"
+copy = true
+
+[[resources.units]]
+name = "apfix.service"
+state = "static"
+source = "apfix.service"
+
+[[resources.units]]
+name = "apfix.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "apfix.timer"

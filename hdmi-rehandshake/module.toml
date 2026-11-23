@@ -1,0 +1,60 @@
+# What hdmi-rehandshake leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "reads hdmi_group and hdmi_mode from the [pi3] block of config.txt; the [pi3] filter is hard-coded",
+  "the late pass restarts hplayer2@* (an app's units, named here by pattern)",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+]
+
+[module]
+id = "hdmi-rehandshake"
+version = "1.0"
+layer = "feature"
+summary = "Re-assert the explicit HDMI mode at boot, late after boot, and when a display is cycled"
+
+[supports]
+machine = ["rpi*"]
+
+[[resources.links]]
+path = "/usr/local/bin/hdmi-rehandshake"
+target = "hdmi-rehandshake"
+
+# The boot pass runs Before=starter.service.
+[[resources.units]]
+name = "hdmi-rehandshake.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "hdmi-rehandshake.service"
+
+[[resources.units]]
+name = "hdmi-rehandshake-late.service"
+state = "static"
+source = "hdmi-rehandshake-late.service"
+
+[[resources.units]]
+name = "hdmi-rehandshake-late.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "hdmi-rehandshake-late.timer"
+
+[[resources.units]]
+name = "hdmi-rehandshake-watch.service"
+state = "static"
+source = "hdmi-rehandshake-watch.service"
+
+[[resources.units]]
+name = "hdmi-rehandshake-watch.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "hdmi-rehandshake-watch.timer"
+
+[[writes]]
+path = "/run/hdmi-rehandshake.state"
+when = "boot"
+summary = "what the boot pass found, on tmpfs"
+
+[[writes]]
+path = "/run/hdmi-rehandshake-watch.state"
+when = "steady"
+summary = "the watcher's last reading, and its actions in /run/hdmi-rehandshake-watch.acts"

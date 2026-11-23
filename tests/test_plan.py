@@ -82,6 +82,7 @@ class LegacyDriver(unittest.TestCase):
         units = dict((u["name"], u["state"]) for u in rorw.model()["resources"]["units"])
         self.assertEqual(units["data-repair.service"], "enabled")
         self.assertEqual(units["fake-clock.service"], "disabled")
+        mods["network-tools"].toml = None  # the .ini's reading, as for rorw (#t-006's toml answers)
         nt = mods["network-tools"].model()
         units = dict((u["name"], u["state"]) for u in nt["resources"]["units"])
         self.assertEqual(units["hostapd.service"], "masked")

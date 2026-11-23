@@ -1,0 +1,32 @@
+# What filebrother leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.data", "boot.starter"]
+undeclared = [
+  "the installer's hook downloads the filebrowser binary to /usr/local/bin/filebrowser by the vendor script (curl | bash), unpinned, when it is missing",
+  "module.ini `dirs`: /data/var/filebrother, made at install (on the root filesystem when /data is not mounted)",
+  "it serves /data with no authentication on 0.0.0.0",
+]
+
+[module]
+id = "filebrother"
+version = "1.0"
+layer = "feature"
+summary = "Web file manager for /data on port 9000 (filebrowser)"
+
+[resources.packages]
+any = ["avahi-utils"]
+
+[[resources.links]]
+path = "/usr/local/bin/filebrother"
+target = "filebrother"
+
+# Runs from a starter.txt line (`filebrother`).
+[[resources.units]]
+name = "filebrother.service"
+state = "disabled"
+source = "filebrother.service"
+
+[[state]]
+path = "/data/var/filebrother"
+summary = "filebrowser's config and database"

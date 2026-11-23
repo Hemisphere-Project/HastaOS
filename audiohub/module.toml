@@ -1,0 +1,66 @@
+# What audiohub leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "install.sh copies one of three graphs to /etc/asound.conf, chosen at install time: asound.conf-pi3 (legacy firmware stack), asound.conf-pi-kms (a vc4hdmi card in /proc/asound/cards; never played) or asound.conf-x86; schema 1 has no per-machine selector on a file",
+  "install.sh copies audiohub.conf to /etc/audiohub.conf only when it is missing (it is config, and its presence is the contract HPlayer2 detects); schema 1 has no copy-if-absent",
+  "install.sh writes /etc/modules-load.d/audiohub.conf (snd-aloop) inline",
+  "install.sh migrates the hplayer-audio name: disables hplayer-audio@{jack,hdmi,usb}, removes its unit, bin and modules-load file, carries latency_us from /etc/hplayer-audio.conf",
+  "install.sh removes audioselect (its udev rule, unit and bin)",
+  "install.sh, on an architecture with no graph: leaves the three forwarders disabled",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+]
+
+[module]
+id = "audiohub"
+version = "1.0"
+layer = "feature"
+summary = "Always-on multi-output audio: the app plays snd-aloop, one alsaloop forwarder per output"
+
+[resources.packages]
+any = ["alsa-utils", "libasound2-plugins"]
+
+[[resources.links]]
+path = "/usr/local/bin/audiohub"
+target = "audiohub"
+
+[[resources.links]]
+path = "/usr/local/bin/audiohub-fwd"
+target = "audiohub-fwd"
+
+[[resources.units]]
+name = "audiohub@.service"
+state = "disabled"
+source = "audiohub@.service"
+
+[[resources.units]]
+name = "audiohub@jack.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "audiohub@.service"
+
+[[resources.units]]
+name = "audiohub@hdmi.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "audiohub@.service"
+
+[[resources.units]]
+name = "audiohub@usb.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+source = "audiohub@.service"
+
+# They restore a mixer state over the hub's graph at boot.
+[[resources.units]]
+name = "alsa-restore.service"
+state = "masked"
+
+[[resources.units]]
+name = "alsa-state.service"
+state = "masked"
+
+[[writes]]
+path = "/etc/asound.conf"
+when = "update"
+summary = "every install.sh run rewrites the graph, so a hand edit does not survive a converge"

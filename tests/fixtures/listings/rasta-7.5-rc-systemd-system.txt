@@ -1,0 +1,117 @@
+# /etc/systemd/system in the Rasta 7.5 rc image (RastaOS-7.5.img, captured 20 November 2026),
+# read with debugfs rdump on 23 November; no box booted. One entry per line: a link and its
+# target, or a plain file and its size. Unit names only, no key and no identity.
+alsa-restore.service -> /dev/null
+alsa-state.service -> /dev/null
+apfix.service (file, 143 B)
+apfix.timer (file, 184 B)
+apt-daily-upgrade.service -> /dev/null
+apt-daily.service -> /dev/null
+audiohub@.service -> /opt/Pi-tools/audiohub/audiohub@.service
+audiohub@hdmi.service -> /opt/Pi-tools/audiohub/audiohub@.service
+audiohub@jack.service -> /opt/Pi-tools/audiohub/audiohub@.service
+audiohub@usb.service -> /opt/Pi-tools/audiohub/audiohub@.service
+audiohub@usb.service.d/usbvol.conf (file, 213 B)
+autologin@.service (file, 1551 B)
+blackbox.service -> /opt/Pi-tools/blackbox/blackbox.service
+blackbox.timer -> /opt/Pi-tools/blackbox/blackbox.timer
+data-repair.service -> /opt/Pi-tools/rorw/data-repair.service
+datesync.service -> /opt/Pi-tools/datesync.service
+datesync.timer -> /opt/Pi-tools/datesync.timer
+dbus-org.freedesktop.Avahi.service -> /lib/systemd/system/avahi-daemon.service
+dbus-org.freedesktop.nm-dispatcher.service -> /lib/systemd/system/NetworkManager-dispatcher.service
+default.target.wants/haveged.service -> /lib/systemd/system/haveged.service
+dhcpcd.service.d/wait.conf (file, 61 B)
+dnsmasq.service -> /dev/null
+dphys-swapfile.service -> /dev/null
+dpkg-db-backup.service -> /dev/null
+dpkg-db-backup.timer -> /dev/null
+extendfs.service -> /opt/Pi-tools/extendfs/extendfs.service
+fake-clock-autosave.service -> /opt/Pi-tools/rorw/fake-clock-autosave.service
+fake-clock-autosave.timer -> /opt/Pi-tools/rorw/fake-clock-autosave.timer
+fake-clock.service -> /opt/Pi-tools/rorw/fake-clock.service
+fake-clock.service.wants/fake-clock-autosave.timer -> /opt/Pi-tools/rorw/fake-clock-autosave.timer
+fake-hwclock.service -> /dev/null
+filebrother.service -> /opt/Pi-tools/filebrother/filebrother.service
+getty@tty1.service.d/noclear.conf (file, 30 B)
+gldriver-test.service -> /dev/null
+halt.target.wants/rpi-display-backlight.service -> /lib/systemd/system/rpi-display-backlight.service
+hdmi-rehandshake-late.service -> /opt/Pi-tools/hdmi-rehandshake/hdmi-rehandshake-late.service
+hdmi-rehandshake-late.timer -> /opt/Pi-tools/hdmi-rehandshake/hdmi-rehandshake-late.timer
+hdmi-rehandshake.service -> /opt/Pi-tools/hdmi-rehandshake/hdmi-rehandshake.service
+hdmi-rehandshake.service.d/anna-nowait.conf (file, 74 B)
+hostapd.service -> /dev/null
+hostapd@.service -> /opt/Pi-tools/network-tools/hostapd@.service
+hostapd@wint.service -> /dev/null
+hostrename@.service -> /opt/Pi-tools/hostrename/hostrename@.service
+hplayer2@.service -> /opt/HPlayer2/hplayer2@.service
+hplayer2@.service.d/tmpdir.conf (file, 321 B)
+iface-off@.service -> /opt/Pi-tools/network-tools/iface-off@.service
+journal-export.service -> /opt/Pi-tools/blackbox/journal-export.service
+journal-export.timer -> /opt/Pi-tools/blackbox/journal-export.timer
+linkwatch.service -> /opt/Pi-tools/linkwatch/linkwatch.service
+linkwatch.timer -> /opt/Pi-tools/linkwatch/linkwatch.timer
+local-fs.target.wants/data-repair.service -> /etc/systemd/system/data-repair.service
+logrotate.service -> /dev/null
+logrotate.timer -> /dev/null
+man-db.timer -> /dev/null
+multi-user.target.wants/NetworkManager.service -> /lib/systemd/system/NetworkManager.service
+multi-user.target.wants/audiohub@hdmi.service -> /opt/Pi-tools/audiohub/audiohub@.service
+multi-user.target.wants/audiohub@jack.service -> /opt/Pi-tools/audiohub/audiohub@.service
+multi-user.target.wants/audiohub@usb.service -> /opt/Pi-tools/audiohub/audiohub@.service
+multi-user.target.wants/avahi-daemon.service -> /lib/systemd/system/avahi-daemon.service
+multi-user.target.wants/console-setup.service -> /lib/systemd/system/console-setup.service
+multi-user.target.wants/cron.service -> /lib/systemd/system/cron.service
+multi-user.target.wants/dphys-swapfile.service -> /lib/systemd/system/dphys-swapfile.service
+multi-user.target.wants/extendfs.service -> /etc/systemd/system/extendfs.service
+multi-user.target.wants/gldriver-test.service -> /lib/systemd/system/gldriver-test.service
+multi-user.target.wants/hdmi-rehandshake.service -> /etc/systemd/system/hdmi-rehandshake.service
+multi-user.target.wants/pppd-dns.service -> /lib/systemd/system/pppd-dns.service
+multi-user.target.wants/raspberrypi-net-mods.service -> /lib/systemd/system/raspberrypi-net-mods.service
+multi-user.target.wants/remote-fs.target -> /lib/systemd/system/remote-fs.target
+multi-user.target.wants/rsyslog.service -> /lib/systemd/system/rsyslog.service
+multi-user.target.wants/ssh.service -> /lib/systemd/system/ssh.service
+multi-user.target.wants/sshswitch.service -> /lib/systemd/system/sshswitch.service
+multi-user.target.wants/starter.service -> /opt/Pi-tools/starter/starter.service
+multi-user.target.wants/triggerhappy.service -> /lib/systemd/system/triggerhappy.service
+multi-user.target.wants/wint-rejoin.service -> /etc/systemd/system/wint-rejoin.service
+network-online.target.wants/NetworkManager-wait-online.service -> /lib/systemd/system/NetworkManager-wait-online.service
+nfs-client.target -> /dev/null
+poweroff.target.wants/rpi-display-backlight.service -> /lib/systemd/system/rpi-display-backlight.service
+rc-local.service.d/ttyoutput.conf (file, 29 B)
+reboot.target.wants/rpi-display-backlight.service -> /lib/systemd/system/rpi-display-backlight.service
+ro-assert.service -> /opt/Pi-tools/rorw/ro-assert.service
+ro-assert.timer -> /opt/Pi-tools/rorw/ro-assert.timer
+rpi-eeprom-update.service -> /dev/null
+rsync.service -> /dev/null
+rsyslog.service -> /dev/null
+setnet.service -> /opt/Pi-tools/network-tools/setnet.service
+sockets.target.wants/avahi-daemon.socket -> /lib/systemd/system/avahi-daemon.socket
+sockets.target.wants/triggerhappy.socket -> /lib/systemd/system/triggerhappy.socket
+splash.service -> /opt/Pi-tools/splash/splash.service
+sshd.service -> /lib/systemd/system/ssh.service
+starter.service -> /opt/Pi-tools/starter/starter.service
+sysinit.target.wants/fake-clock.service -> /opt/Pi-tools/rorw/fake-clock.service
+sysinit.target.wants/keyboard-setup.service -> /lib/systemd/system/keyboard-setup.service
+sysinit.target.wants/splash.service -> /opt/Pi-tools/splash/splash.service
+syslog.service -> /lib/systemd/system/rsyslog.service
+syslog.socket -> /dev/null
+systemd-rfkill.service -> /dev/null
+systemd-rfkill.socket -> /dev/null
+timers.target.wants/blackbox.timer -> /etc/systemd/system/blackbox.timer
+timers.target.wants/datesync.timer -> /opt/Pi-tools/datesync.timer
+timers.target.wants/journal-export.timer -> /etc/systemd/system/journal-export.timer
+timers.target.wants/linkwatch.timer -> /etc/systemd/system/linkwatch.timer
+timers.target.wants/logrotate.timer -> /lib/systemd/system/logrotate.timer
+timers.target.wants/man-db.timer -> /lib/systemd/system/man-db.timer
+timers.target.wants/ro-assert.timer -> /opt/Pi-tools/rorw/ro-assert.timer
+timers.target.wants/usbfix.timer -> /etc/systemd/system/usbfix.timer
+timers.target.wants/usbvol.timer -> /etc/systemd/system/usbvol.timer
+uplink-fwd@.service -> /opt/Pi-tools/network-tools/uplink-fwd@.service
+usbautomount@.service -> /opt/Pi-tools/usbautomount/usbautomount@.service
+usbfix.service (file, 162 B)
+usbfix.timer (file, 147 B)
+usbvol.service (file, 183 B)
+usbvol.timer (file, 155 B)
+webconf.service -> /opt/Pi-tools/webconf/webconf.service
+wint-rejoin.service (file, 299 B)

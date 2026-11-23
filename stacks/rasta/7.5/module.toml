@@ -1,0 +1,275 @@
+# The Rasta 7.5 overlay (docs/DESIGN.md §2 and §7, schema 1). Data only: image/rastaos-bake still
+# does this work by hand until `hasta apply` takes it over (#t-010). What the stack is, base and
+# player build included, is stack.toml beside this file.
+#
+# It declares three things:
+#   1. what the bake's steps leave on a card (units, rtc, turbo, apfix, dns, wifi), so a box
+#      upgraded in place and a card burned from the image can be held to the same state;
+#   2. an owner for every mask the 7.5 image carries that no module claims, each with its reason
+#      or « inherited, reason unknown »;
+#   3. what the base image and the stack's network setup (setup/bootstrap.py) enable under
+#      /etc/systemd/system, so that `hasta check` reports only what nobody declared.
+# The masks the modules own stay with them: logrotate and dpkg-db-backup (rorw), alsa-restore and
+# alsa-state (audiohub), hostapd.service (network-tools).
+#
+# Paths in `source` are relative to this directory.
+schema = 1
+undeclared = [
+  "bake `converge`: moves /opt/Pi-tools to the release tag through setup/rastaos-update and writes /etc/rastaos-release: a release move, not state (#t-009, #t-010)",
+  "bake `hplayer2`: moves /opt/HPlayer2 to the same tag, detached, with refs/rastaos/rollback: the app's, not the stack's",
+  "bake `stamps`: /etc/rastaos-patches.txt keeps the last anna74 line and every older one, then one rastaos75 line naming the recipe sha",
+  "bake `version`: /boot/VERSION holds one line, `7.5 -- RastaOS-7.5, baked from a 7.4 card by Pi-tools image/rastaos-bake@<sha>`; the sha is the recipe's, so schema 1 cannot hold it as a file",
+  "bake `units`: removes /etc/cron.hourly/fake-hwclock (its hourly save writes /etc on a read-only root); schema 1 has no absent-file form",
+  "bake `units` and `apfix`: remove any *.wants/ link of a unit they mask or unwire; a wants link beside a mask is drift for `check`",
+  "bake `rtc`: comments out ANY config.txt line that starts with dtoverlay=i2c-rtc; the line declared absent below is the DS3231 form the 7.x cards carry. Per card: uncomment it on a board with the DS3231",
+  "bake `turbo`: per card, force_turbo=1 may be uncommented again to pin the max clock",
+  "bake `dns`, live only: purges openresolv and resolvconf",
+  "bake `dns`: dns=none must stand in NetworkManager.conf or in a conf.d file; the bake writes conf.d/90-rastaos-dns.conf only when neither has it, and schema 1 cannot say « one of »",
+  "bake `wifi`: <boot>/wifi/wint-hotspot.nmconnection and /etc/NetworkManager/system-connections/wint-hotspot.nmconnection are absent (the fleet hotspot PSK), and so is the store's _anna74-removed/ directory; schema 1 has no absent-file form",
+  "bake `nowde`: /opt/nowde-tools keeps one Nowde firmware (2.0.5 by default)",
+  "bake `media`: /data/media holds only 0_mire.mp4, and no /data/hplayer2*.cfg: media policy, for a fleet, not a stack",
+  "bake `starter`: <boot>/starter.txt carries `hostrename@player-000` and `hplayer2@auto` (the burn rewrites the name per card), no /boot/hplayer2.conf, /etc/hostname and the 127.0.1.1 line of /etc/hosts = player-000; schema 1 has no starter.txt line form, and the name is identity, for the stamp",
+  "bake `seal` (offline, on the captured image): root's and users' authorized_keys keep only the fingerprints in image/authorized-keys.keep; it refuses without extendfs, its unit, growpart, or a kept root key",
+  "bake `seal`: wires extendfs.service into multi-user.target (extendfs's manifest declares it enabled), drops the drive-id markers (extendfs's seal), empties /data/var/tailscale and /var/lib/tailscale (tailscale's seal), removes /root/.bash_history (rorw's seal truncates its target)",
+]
+
+[module]
+id = "rasta-7.5"
+version = "7.5"
+layer = "stack"
+summary = "Rasta 7.5: what image/rastaos-bake makes of a 7.4 card, and an owner for every mask the image carries"
+
+[supports]
+machine = ["rpi3"]
+base = ["raspbian-buster"]
+
+# ── 1. the bake's steps ──────────────────────────────────────────────────────────────────────
+
+# bake `units`: fake-hwclock (rorw's fake-clock keeps the clock; both ran on 7.4)
+[[resources.units]]
+name = "fake-hwclock.service"
+state = "masked"
+
+# bake `units`: a Pi 3 has no EEPROM, and no firmware writes at a show
+[[resources.units]]
+name = "rpi-eeprom-update.service"
+state = "masked"
+
+# bake `units`
+[[resources.units]]
+name = "nfs-client.target"
+state = "masked"
+
+# bake `units`
+[[resources.units]]
+name = "rsync.service"
+state = "masked"
+
+# bake `apfix`: apfix is opt-in since 7.5, off with the hotspot. Unwired, not masked: a card that
+# keeps its hotspot runs `apfix/install.sh --now`.
+[[resources.units]]
+name = "apfix.timer"
+state = "disabled"
+
+# bake `rtc`: a board without the RTC logged « rtc-ds1307 probe failed -5 » at every boot
+[[resources.lines]]
+file = "config"
+line = "dtoverlay=i2c-rtc,ds3231"
+present = false
+
+# bake `turbo` (rastaos decision 13/11): it pins every core at its max clock, heat included
+[[resources.lines]]
+file = "config"
+line = "force_turbo=1"
+present = false
+
+# bake `dns`: openresolv pointed resolv.conf at 127.0.0.1, so no DNS, no datesync, no apt, no git.
+# A plain file, never a link.
+[[resources.files]]
+path = "/etc/resolv.conf"
+source = "files/resolv.conf"
+mode = "0644"
+copy = true
+
+# bake `wifi` (pi-tools#t-064): Wi-Fi scans keep the MAC
+[[resources.files]]
+path = "/etc/NetworkManager/conf.d/91-rastaos-scan.conf"
+source = "files/91-rastaos-scan.conf"
+mode = "0644"
+copy = true
+
+# ── 2. masks no module claims ────────────────────────────────────────────────────────────────
+
+# Field patches P18 (LEA, 18/09) and P22 (fleet, 21/09): with the fake clock it fires after every
+# boot, three minutes of mandb CPU exactly while the slaves chase.
+[[resources.units]]
+name = "man-db.timer"
+state = "masked"
+
+# Garden second pass (29/09): rsyslog filled the 102 MB tmpfs that /var/log shares with /tmp, and
+# HPlayer2 could not restart. Masked with its socket: syslog.socket restarts a masked rsyslog through
+# the syslog.service alias within the second (systemd 241).
+[[resources.units]]
+name = "rsyslog.service"
+state = "masked"
+
+[[resources.units]]
+name = "syslog.socket"
+state = "masked"
+
+# Inherited, reason unknown. (setup/bootstrap.py disables apt-daily.timer and
+# apt-daily-upgrade.timer; nothing in this tree masks the services.)
+[[resources.units]]
+name = "apt-daily.service"
+state = "masked"
+
+[[resources.units]]
+name = "apt-daily-upgrade.service"
+state = "masked"
+
+# Inherited, reason unknown. (rorw puts `noswap` on the command line.)
+[[resources.units]]
+name = "dphys-swapfile.service"
+state = "masked"
+
+# Inherited, reason unknown.
+[[resources.units]]
+name = "gldriver-test.service"
+state = "masked"
+
+# Inherited, reason unknown.
+[[resources.units]]
+name = "systemd-rfkill.service"
+state = "masked"
+
+[[resources.units]]
+name = "systemd-rfkill.socket"
+state = "masked"
+
+# ── 3. what the base and the stack's network setup enable ────────────────────────────────────
+
+# setup/bootstrap.py: NetworkManager replaces dhcpcd, avahi publishes the box.
+[[resources.units]]
+name = "NetworkManager.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+# Its alias, dbus-org.freedesktop.nm-dispatcher.service, is the enablement.
+[[resources.units]]
+name = "NetworkManager-dispatcher.service"
+state = "enabled"
+
+# Enabled in the image; setup/bootstrap.py disables it on a fresh build. Declared as the image has it.
+[[resources.units]]
+name = "NetworkManager-wait-online.service"
+state = "enabled"
+wanted_by = ["network-online.target"]
+
+[[resources.units]]
+name = "dhcpcd.service"
+state = "disabled"
+
+[[resources.units]]
+name = "avahi-daemon.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "avahi-daemon.socket"
+state = "enabled"
+wanted_by = ["sockets.target"]
+
+# The base image's own (Raspbian Buster): enabled by its packages.
+[[resources.units]]
+name = "ssh.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "sshswitch.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "console-setup.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "keyboard-setup.service"
+state = "enabled"
+wanted_by = ["sysinit.target"]
+
+[[resources.units]]
+name = "cron.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "pppd-dns.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "raspberrypi-net-mods.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "remote-fs.target"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "triggerhappy.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[resources.units]]
+name = "triggerhappy.socket"
+state = "enabled"
+wanted_by = ["sockets.target"]
+
+[[resources.units]]
+name = "rpi-display-backlight.service"
+state = "enabled"
+wanted_by = ["halt.target", "poweroff.target", "reboot.target"]
+
+# Inherited, reason unknown: a plain unit file, and nothing enables it.
+[[resources.units]]
+name = "autologin@.service"
+state = "disabled"
+copy = true
+
+# Drop-ins the base carries (pi-gen and raspi-config). Each source has the byte count the 7.5
+# listing shows; the text is pi-gen's and raspi-config's, not read from the image.
+# raspi-config's « wait for network at boot »; harmless, dhcpcd is disabled.
+[[resources.files]]
+path = "/etc/systemd/system/dhcpcd.service.d/wait.conf"
+source = "files/dhcpcd-wait.conf"
+mode = "0644"
+copy = true
+
+[[resources.files]]
+path = "/etc/systemd/system/getty@tty1.service.d/noclear.conf"
+source = "files/getty-noclear.conf"
+mode = "0644"
+copy = true
+
+[[resources.files]]
+path = "/etc/systemd/system/rc-local.service.d/ttyoutput.conf"
+source = "files/rc-local-ttyoutput.conf"
+mode = "0644"
+copy = true
+
+# ── the image's seal, beyond what the modules declare ────────────────────────────────────────
+
+[[seal]]
+path = "/data/var/log"
+action = "delete"
+summary = "the bench card's journal-export and blackbox.log, emptied"
+
+[[seal]]
+path = "/var/log/journal"
+action = "delete"
+summary = "the root's persistent journal, emptied"

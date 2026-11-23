@@ -1,0 +1,34 @@
+# Rasta 7.5 — the stack description (docs/DESIGN.md §2). Descriptive in this phase: nothing reads it
+# to act, and tests/test_declared.py only checks that it parses and names what a stack names.
+# The overlay manifest beside it (module.toml) declares what the bake leaves on a card.
+#
+# A stack is a media combination pinned whole: an upgrade never changes what is below.
+
+[stack]
+name = "rasta"
+revision = "7.5"
+machine = "rpi3"
+summary = "Pi 3B+ video player: Raspbian Buster armhf, legacy firmware stack, mmal decode, mpv 0.33 on ffmpeg 4.4"
+lineage = "baked from a 7.4 card by image/rastaos-bake; the rc captured on 20 November 2026"
+
+[base]
+name = "raspbian-buster"
+architecture = "armhf"
+release = "2023-05-03"
+summary = "Raspbian 10 (Buster), systemd 241, NetworkManager 1.14.6, Python 3.7"
+
+[kernel]
+# Read on the 7.3 golden (kernel and firmware) and the 7.4 bench card (kernel); the 7.5 bake
+# moves neither.
+release = "6.18.38-v7+"
+firmware = "d1ede336"
+summary = "the legacy display stack (dispmanx, mmal, vo_rpi) on a current kernel: arm_64bit=0, no vc4-kms, gpu_mem set"
+
+[graphics]
+driver = "legacy"
+summary = "firmware KMS off: mmal decode, dispmanx output"
+
+[player]
+mpv = "v0.33.0"
+ffmpeg = "n4.4"
+flags = ["--hwdec=mmal", "--vo=rpi"]

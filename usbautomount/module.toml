@@ -1,0 +1,45 @@
+# What usbautomount leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.data"]
+undeclared = [
+  "module.ini `dirs`: /mnt/usb0 to /mnt/usb7 on the root filesystem; schema 1 has no directory resource",
+  "usbautomount mounts exfat and ntfs too, with no package that provides them",
+]
+
+[module]
+id = "usbautomount"
+version = "1.0"
+layer = "feature"
+summary = "Mount USB storage on /mnt/usb0..7 and link the latest one to /data/usb"
+
+[resources.packages]
+any = ["lockfile-progs", "dosfstools", "xfsprogs", "hfsprogs"]
+
+[[resources.links]]
+path = "/usr/local/bin/usbautomount"
+target = "usbautomount"
+
+[[resources.links]]
+path = "/etc/udev/rules.d/90-usbautomount.rules"
+target = "90-usbautomount.rules"
+
+# Started by the udev rule (SYSTEMD_WANTS), one instance per device.
+[[resources.units]]
+name = "usbautomount@.service"
+state = "static"
+source = "usbautomount@.service"
+
+[[state]]
+path = "/data/usb"
+summary = "a link to the mount point of the last stick plugged in"
+
+[[writes]]
+path = "/data/usb"
+when = "event"
+summary = "re-linked at each plug"
+
+[[writes]]
+path = "/var/run/usbautomount"
+when = "event"
+summary = "the lock, on tmpfs"

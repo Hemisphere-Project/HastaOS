@@ -1,0 +1,35 @@
+# What xrun leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "the installer's hook creates the user hmini when it is missing; schema 1 has no user resource",
+  "the hook sets allowed_users=anybody in /etc/X11/Xwrapper.config",
+  "the hook writes /root/.xinitrc (`exec openbox-session`) inline, and removes /etc/xdg/autostart/picom.desktop",
+  "no unit and no starter line: something else must call xrun",
+]
+
+[module]
+id = "xrun"
+version = "1.0"
+layer = "feature"
+summary = "X11 with openbox, with rotation and reflection flags"
+
+[resources.packages]
+any = ["xorg", "openbox", "xdotool", "python3-xdg", "picom"]
+
+[[resources.links]]
+path = "/usr/local/bin/xrun"
+target = "xrun"
+
+[[resources.links]]
+path = "/usr/local/bin/xstop"
+target = "xstop"
+
+[[resources.links]]
+path = "/etc/xdg/openbox/autostart"
+target = "openbox-start"
+
+[[writes]]
+path = "/tmp/.Xauthority"
+when = "event"
+summary = "XAUTHORITY, at each start"

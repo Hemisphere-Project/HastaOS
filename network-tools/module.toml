@@ -1,0 +1,71 @@
+# What network-tools leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "the installer's hook purges openresolv and resolvconf, then writes a static /etc/resolv.conf (nameserver 1.1.1.1, 1.0.0.1) inline; the Rasta 7.5 overlay declares the same file (stacks/rasta/7.5)",
+  "the hook writes /etc/dnsmasq.conf inline: listen 10.0.0.1 and 10.1.0.1, two DHCP ranges, leases in /var/lib/dnsmasq; schema 1 files need a source in the tree",
+  "the hook seeds <boot>/wifi (boot dir by probe) with the top-level files of profiles/, never overwriting, and never a hotspot profile unless pitools.txt says hotspot=yes",
+  "the hook, x86: strips band=a and channel=36 from <boot>/wifi/wint-hotspot.nmconnection, and writes /etc/modules-load.d/wlan-dongle.conf (rtl8xxxu)",
+  "the hook removes /etc/modprobe.d/blacklist-rtl8xxxu.conf when present",
+  "setnet, at each run: renders <boot>/wifi into /etc/NetworkManager/system-connections ({N} from the hostname), prunes the store into /etc/NetworkManager/setnet-pruned, writes /etc/hostapd/<if>.conf and .ipaddr and conf.d/50-hostapd-<if>.conf, and enables hostapd@<if> for each AP profile: the instances are run-time state, not install state",
+  "dnsmasq.service is enabled by setup/bootstrap.py, not by this module; it is declared here because setnet restarts it to serve the hotspot's DHCP",
+  "dnsmasq.d/ and profiles/ are templates read by the hook and by webconf, never linked",
+]
+
+[module]
+id = "network-tools"
+version = "1.0"
+layer = "feature"
+summary = "Network profiles from the boot partition (setnet), hostapd per interface, uplink forwarding"
+
+[resources.packages]
+any = ["hostapd", "dnsmasq"]
+
+[[resources.links]]
+path = "/usr/local/bin/setnet"
+target = "setnet"
+
+[[resources.links]]
+path = "/usr/local/bin/uplink-fwd"
+target = "uplink-fwd"
+
+# setnet runs from a starter.txt line (`setnet`), so its unit is linked, not enabled.
+[[resources.units]]
+name = "setnet.service"
+state = "disabled"
+source = "setnet.service"
+
+[[resources.units]]
+name = "uplink-fwd@.service"
+state = "disabled"
+source = "uplink-fwd@.service"
+
+[[resources.units]]
+name = "iface-off@.service"
+state = "static"
+source = "iface-off@.service"
+
+[[resources.units]]
+name = "hostapd@.service"
+state = "disabled"
+source = "hostapd@.service"
+
+# The stock single-instance unit must not grab an interface beside hostapd@<if>.
+[[resources.units]]
+name = "hostapd.service"
+state = "masked"
+
+[[resources.units]]
+name = "dnsmasq.service"
+state = "enabled"
+wanted_by = ["multi-user.target"]
+
+[[writes]]
+path = "/etc/NetworkManager/system-connections"
+when = "boot"
+summary = "setnet renders <boot>/wifi here, between rw and ro, only when something differs"
+
+[[writes]]
+path = "/etc/hostapd"
+when = "boot"
+summary = "setnet writes <if>.conf and <if>.ipaddr for each AP profile"

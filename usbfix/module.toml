@@ -1,0 +1,40 @@
+# What usbfix leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "unless installed with --no-rsyslog (remembered in /etc/default/usbfix): comments out imklog in /etc/rsyslog.conf, and writes /etc/rsyslog.d/00-kern-journal-only.conf (`kern.* stop`) inline",
+  "with --no-rsyslog: writes /etc/default/usbfix (RSYSLOG=0) inline",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+]
+
+[module]
+id = "usbfix"
+version = "1.0"
+layer = "feature"
+summary = "USB-link watchdog: re-enumerate a device whose endpoint stalled, or a silent Nowde node"
+
+[supports]
+machine = ["rpi*"]
+
+# A COPY, not a link: a new tag reaches it only by running install.sh again.
+[[resources.files]]
+path = "/usr/local/sbin/usbfix"
+source = "usbfix"
+mode = "0755"
+copy = true
+
+[[resources.units]]
+name = "usbfix.service"
+state = "static"
+source = "usbfix.service"
+
+[[resources.units]]
+name = "usbfix.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "usbfix.timer"
+
+[[writes]]
+path = "/run/usbfix.last"
+when = "event"
+summary = "the last re-enumeration, for the 90 s cooldown (/run/usbfix.inhibit, the hand's pause, is only read)"

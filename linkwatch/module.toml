@@ -1,0 +1,45 @@
+# What linkwatch leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+undeclared = [
+  "its role comes from marker files, /boot/wifi/<if>-sync-STA.nmconnection or -AP: /boot is hard-coded, so it does nothing where the boot partition is /boot/firmware",
+  "settings in /etc/default/linkwatch, on the read-only root; install.sh does not write it",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+]
+
+[module]
+id = "linkwatch"
+version = "1.0"
+layer = "feature"
+summary = "Sync-link watchdog, every 30 s: driver reload, deauth of a stale station, restart of a silent sync AP"
+
+[supports]
+machine = ["rpi*"]
+
+# A COPY, not a link: a new tag reaches it only by running install.sh again.
+[[resources.files]]
+path = "/usr/local/sbin/linkwatch"
+source = "linkwatch"
+mode = "0755"
+copy = true
+
+[[resources.units]]
+name = "linkwatch.service"
+state = "static"
+source = "linkwatch.service"
+
+[[resources.units]]
+name = "linkwatch.timer"
+state = "enabled"
+wanted_by = ["timers.target"]
+source = "linkwatch.timer"
+
+[[writes]]
+path = "/run/linkwatch"
+when = "steady"
+summary = "its state between ticks, on tmpfs"
+
+[[writes]]
+path = "/data/tmp"
+when = "steady"
+summary = "TMPDIR, made at every tick"

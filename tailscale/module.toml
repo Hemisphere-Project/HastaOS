@@ -1,0 +1,44 @@
+# What tailscale leaves on a box (docs/DESIGN.md §7, schema 1). Data only.
+# Paths in `source` and a relative link `target` are relative to this directory.
+schema = 1
+requires = ["storage.data", "boot.starter"]
+undeclared = [
+  "install.sh pipes the vendor installer from the network (curl | sh), unpinned: tailscale and tailscaled come from no declared package",
+  "install.sh copies an existing /var/lib/tailscale into /data/var/tailscale before the bind",
+  "install.sh runs `mount -a` and goes rw then ro around its own run",
+  "install.sh writes the module receipt to /etc/pi-tools-modules.txt (setup/module-manifest)",
+  "the fstab bind carries no nofail, and a later rorw install rewrites fstab without it",
+]
+
+[module]
+id = "tailscale"
+version = "1.0"
+layer = "feature"
+summary = "Tailscale, its state on /data through a bind mount"
+
+[[resources.links]]
+path = "/usr/local/bin/tailscale-start"
+target = "tailscale-start"
+
+# Runs from a starter.txt line (`tailscale-start`); the stock tailscaled stays off.
+[[resources.units]]
+name = "tailscale-start.service"
+state = "disabled"
+source = "tailscale-start.service"
+
+[[resources.units]]
+name = "tailscaled.service"
+state = "disabled"
+
+[[resources.lines]]
+file = "fstab"
+line = "/data/var/tailscale /var/lib/tailscale none defaults,bind 0 0"
+
+[[state]]
+path = "/data/var/tailscale"
+summary = "the node's identity and keys, bound onto /var/lib/tailscale"
+
+[[seal]]
+path = "/data/var/tailscale"
+action = "delete"
+summary = "a clone must not share the node key (the bake's seal empties it; extendfs wipes it on a clone)"

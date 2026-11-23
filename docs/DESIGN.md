@@ -238,6 +238,20 @@ where the module runs on every machine, as the legacy driver reads `platforms = 
 `tests/test_declared.py` holds them to the tree: valid, every source present, every bin and unit
 of the `module.ini` declared again, every unit file in the directory declared or listed.
 
+The fourteen feature modules carry theirs the same way (#t-006). A unit a starter.txt line
+starts is linked, not enabled (`disabled`); a unit with no `[Install]` is `static`; a script an
+installer copies to `/usr/local/sbin` is a file with `copy = true`.
+
+**The Rasta 7.5 overlay** is `stacks/rasta/7.5/`: `stack.toml` describes the stack (base, kernel
+and firmware, graphics, player build; descriptive only), and its `module.toml` (layer `stack`,
+id `rasta-7.5`) declares what `image/rastaos-bake` does by hand, gives an owner and a reason to
+every mask the 7.5 image carries that no module claims, and declares what the base and the
+stack's network setup enable under `/etc/systemd/system`. A stack declares after the modules and
+wins (§2): `apfix.timer` is `enabled` in apfix's manifest and `disabled` in the overlay. The test
+reads the 7.5 rc's `/etc/systemd/system` (`tests/fixtures/listings/`) and holds every entry to an
+owner — a mask, a `*.wants/` link, an alias of an enabled unit, a copy, a drop-in — or to its list
+of named drift, or to an app's manifest outside this tree.
+
 ## 8. Tests
 
 `tests/` (standard-library `unittest`) runs inside `bench/verify`, the repo's one gate, under
