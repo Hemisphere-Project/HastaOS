@@ -38,8 +38,51 @@ DATA_LABELS = ["data", "DATA"]
 _PI_BOOT_MARKERS = ("config.txt", "cmdline.txt", "start.elf", "bootcode.bin")
 
 
+class Root(str):
+    """A root directory whose boot or data partition sits elsewhere: a card in a reader, where
+    the desktop mounts each partition on its own. `mounts` maps the path the box mounts a
+    partition on (`/boot`, `/data`) to the directory that holds it here; every read under the
+    root goes through `_join`, so the facts, the plan and the check see one tree."""
+
+    def __new__(cls, path, mounts=()):
+        self = str.__new__(cls, path)
+        # longest mount point first, so /boot/firmware wins over /boot
+        self.mounts = sorted(((p.rstrip("/") or "/", h) for p, h in mounts),
+                             key=lambda m: -len(m[0]))
+        return self
+
+
 def _join(root, path):
+    path = "/" + path.lstrip("/")
+    for point, host in getattr(root, "mounts", ()):
+        if path == point or path.startswith(point + "/"):
+            return os.path.join(host, path[len(point):].lstrip("/"))
     return os.path.join(root, path.lstrip("/"))
+
+
+def boot_point(root):
+    """Where the box mounts its boot FAT: the vfat line of the root's /etc/fstab, else
+    /boot/firmware when the root has that directory, else /boot."""
+    for line in (read_text(root, "/etc/fstab") or "").splitlines():
+        f = line.split()
+        if len(f) >= 3 and not f[0].startswith("#") and f[2] in ("vfat", "msdos"):
+            return f[1].rstrip("/") or "/"
+    return "/boot/firmware" if os.path.isdir(_join(root, "/boot/firmware")) else "/boot"
+
+
+DATA_POINT = "/data"  # every installer and fstab line mounts the data partition there
+
+
+def mounted(root, boot=None, data=None):
+    """`root` with the boot partition read from the directory `boot` (at the point the root's
+    fstab gives it) and the data partition from `data` (at /data). Unchanged when neither is
+    given."""
+    mounts = []
+    if boot:
+        mounts.append((boot_point(root), os.path.abspath(boot)))
+    if data:
+        mounts.append((DATA_POINT, os.path.abspath(data)))
+    return Root(root, mounts) if mounts else root
 
 
 def resolve(root, path):
@@ -340,8 +383,12 @@ class Facts(object):
         self._set("stack", None, None)
 
     def as_dict(self):
-        return {"root": self.root, "live": self.live,
-                "facts": dict(self.values), "sources": dict(self.sources)}
+        out = {"root": self.root, "live": self.live,
+               "facts": dict(self.values), "sources": dict(self.sources)}
+        mounts = getattr(self.root, "mounts", None)
+        if mounts:
+            out["mounts"] = dict(mounts)
+        return out
 
 
 def _section_applies(name, machine):

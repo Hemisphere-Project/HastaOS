@@ -178,7 +178,7 @@ facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_pla
 `setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
 same decision for every module.
 
-### `hasta check [--root DIR] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
+### `hasta check [--root DIR [--boot DIR] [--data DIR]] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
 
 What the manifests declare against what the box holds; changes nothing. Exit 0 clean, 1 drift,
 2 usage or not a box (no `/etc/systemd/system` under the root). Three parts:
@@ -206,6 +206,13 @@ Unit states are read from the links on disk: no running systemd, and `--root` re
 the same way. `--module M` reports M's declared resources only (no undeclared, no receipts). `tests/test_check.py` rebuilds the
 7.5 rc's `/etc/systemd/system` from `tests/fixtures/listings/` and requires every defect its note
 names, and none of the wanted masks.
+
+**Off the box** (#t-008). A card in a reader: the desktop mounts each partition on its own, so
+`--boot DIR` names the boot FAT and `--data DIR` the data partition when they are not under the
+root. Every read goes through one mount map (`facts.Root`): the FAT is read at the point the
+root's `/etc/fstab` mounts it (its `vfat` line; else `/boot/firmware` when the root has it, else
+`/boot`), the data partition at `/data`. Facts, plan and check then see one tree, and the report
+is the one `check` gives on the same tree joined (`tests/test_check_offline.py`).
 
 ## 7. The manifest — `module.toml`, schema 1
 

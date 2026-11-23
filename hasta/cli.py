@@ -134,8 +134,13 @@ def cmd_plan(args):
 
 
 def cmd_check(args):
+    for flag, d in (("--boot", args.boot), ("--data", args.data)):
+        if d and not os.path.isdir(d):
+            print("hasta check: %s %s: not a directory" % (flag, d), file=sys.stderr)
+            return 2
+    root = facts_mod.mounted(args.root, boot=args.boot, data=args.data)
     try:
-        r = check_mod.make(os.path.abspath(args.tree), args.root, receipts_path=args.receipts,
+        r = check_mod.make(os.path.abspath(args.tree), root, receipts_path=args.receipts,
                            apps=args.app or (), platform=args.platform, only=args.module)
     except ValueError as exc:
         print("hasta check: %s" % exc, file=sys.stderr)
@@ -203,6 +208,11 @@ def parser():
              " state no manifest declares; changes nothing")
     sp.add_argument("--root", default="/", metavar="DIR",
                     help="check the tree at DIR (a card in a reader) instead of this box")
+    sp.add_argument("--boot", metavar="DIR",
+                    help="the boot partition, where it is not under ROOT (a card's FAT, mounted"
+                    " on its own); read at the point ROOT's fstab mounts it")
+    sp.add_argument("--data", metavar="DIR",
+                    help="the data partition, where it is not ROOT/data")
     sp.add_argument("--module", metavar="M",
                     help="only this module's declared resources (no undeclared part)")
     sp.add_argument("--tree", default=TREE, metavar="DIR",
