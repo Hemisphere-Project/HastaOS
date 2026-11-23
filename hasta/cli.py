@@ -6,6 +6,7 @@ import os
 import sys
 
 from hasta import SCHEMA_VERSION, __version__
+from hasta import check as check_mod
 from hasta import facts as facts_mod
 from hasta import manifest
 from hasta import plan as plan_mod
@@ -132,6 +133,27 @@ def cmd_plan(args):
     return 1 if p.problems else 0
 
 
+def cmd_check(args):
+    try:
+        r = check_mod.make(os.path.abspath(args.tree), args.root, receipts_path=args.receipts,
+                           apps=args.app or (), platform=args.platform, only=args.module)
+    except ValueError as exc:
+        print("hasta check: %s" % exc, file=sys.stderr)
+        return 2
+    lines = []
+    for f in r.different:
+        lines.append("different   %-18s %s: %s" % (f.module, f.path, f.what))
+    for f in r.undeclared:
+        lines.append("undeclared  %-18s %s: %s" % (f.kind, f.path, f.what))
+    for prob in r.problems:
+        lines.append("problem     %s" % prob)
+    lines.append("%s: %d module(s)%s; %d different, %d undeclared"
+                 % (r.facts.root, len(r.modules), ", stack %s" % r.stack if r.stack else "",
+                    len(r.different), len(r.undeclared)))
+    _emit(args, r.as_dict(), lines)
+    return 0 if r.clean else 1
+
+
 def parser():
     p = argparse.ArgumentParser(
         prog="hasta", description="Hasta: one engine, one module contract (docs/DESIGN.md).")
@@ -172,6 +194,22 @@ def parser():
     sp.add_argument("--platform", choices=("pi", "x86"),
                     help="override the platform the facts give")
     sp.set_defaults(func=cmd_plan)
+
+    sp = add("check", "what the manifests declare against what the box holds, and the unit"
+             " state no manifest declares; changes nothing")
+    sp.add_argument("--root", default="/", metavar="DIR",
+                    help="check the tree at DIR (a card in a reader) instead of this box")
+    sp.add_argument("--module", metavar="M",
+                    help="only this module's declared resources (no undeclared part)")
+    sp.add_argument("--tree", default=TREE, metavar="DIR",
+                    help="the module tree that declares (default: this checkout)")
+    sp.add_argument("--receipts", metavar="FILE",
+                    help="the module receipts (default: ROOT/etc/pi-tools-modules.txt)")
+    sp.add_argument("--app", action="append", metavar="DIR",
+                    help="an app tree carrying its own manifest (repeatable)")
+    sp.add_argument("--platform", choices=("pi", "x86"),
+                    help="override the platform the facts give")
+    sp.set_defaults(func=cmd_check)
     return p
 
 

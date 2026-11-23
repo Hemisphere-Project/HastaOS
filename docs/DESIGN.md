@@ -178,6 +178,28 @@ facts' machine (`rpi*` → pi, `x86*` → x86), or `--platform`. `tests/test_pla
 `setup/converge.py --plan` and `hasta plan` on the same 7.5 receipts and boxes and requires the
 same decision for every module.
 
+### `hasta check [--root DIR] [--module M] [--tree DIR] [--receipts FILE] [--app DIR]`
+
+What the manifests declare against what the box holds; changes nothing. Exit 0 clean, 1 drift,
+2 usage or not a box (no `/etc/systemd/system` under the root). Two parts:
+
+- **different** — per module on the box (the plan's set, less `skip` and `unrecorded`; datesync's
+  when one of its paths is there) and the box's stack overlay (the facts' stack, from
+  `stacks/<name>/<revision>/`; it declares after the modules and wins on a unit both name):
+  a unit masked or not against its state, an `enabled` one missing a `<target>.wants/` link,
+  a `disabled` or `static` one that has one, a copy where the module links its unit or the
+  reverse, a declared file or link missing, a copied file whose content or mode differs.
+- **undeclared** — every entry of `/etc/systemd/system`, one directory level down, that no
+  manifest of the tree claims in the form it has: a mask, a `*.wants/` or `*.requires/` link,
+  an alias of an enabled unit, a drop-in, a plain unit file, a link to a unit file. Every
+  manifest counts here, on the box or not; when one declares the unit in another form, the line
+  says which. An entry already reported as different is not repeated.
+
+Unit states are read from the links on disk: no running systemd, and `--root` reads a card's tree
+the same way. `--module M` reports M's declared resources only. `tests/test_check.py` rebuilds the
+7.5 rc's `/etc/systemd/system` from `tests/fixtures/listings/` and requires every defect its note
+names, and none of the wanted masks.
+
 ## 7. The manifest — `module.toml`, schema 1
 
 Read with `tomllib` where it exists (3.11+) and with the vendored `hasta/_vendor/tomli.py` (tomli
