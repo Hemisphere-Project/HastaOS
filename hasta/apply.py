@@ -11,8 +11,8 @@ the module directory. A module whose receipt already names its current fingerpri
 is not run again, and its receipt is not rewritten: a second apply changes nothing. The legacy
 receipts (/etc/pi-tools-modules.txt, /etc/rastaos-release) keep their writers.
 
-Resume: while an apply runs, a marker on the data partition (/data/.hasta-apply) names what it
-was asked to do. It is removed when every module ends applied. `hasta apply --resume` reruns
+Resume: while an apply runs, a marker on the data partition (/data/.hasta-apply; on a box with
+no /data, /var/lib/hasta/apply-pending) names what it was asked to do. It is removed when every module ends applied. `hasta apply --resume` reruns
 what a marker names, and does nothing without one; since every finished module left its
 receipt, the rerun runs only what the interrupted one had not finished.
 
@@ -32,6 +32,7 @@ from hasta import plan as plan_mod
 
 RECEIPT_DIR = "/etc/hasta/receipts"
 MARKER = "/data/.hasta-apply"
+MARKER_NO_DATA = "/var/lib/hasta/apply-pending"
 RUNS = ("upgrade", "script", "install")          # the actions that run something
 RECEIPTED = RUNS + ("linked",)                    # the actions that leave a receipt
 SKIP_DIRS = ("__pycache__", "node_modules", ".venv")
@@ -158,7 +159,11 @@ class Result(object):
 
 
 def marker_path(root):
-    return facts_mod._join(root, MARKER)
+    """/data/.hasta-apply; a box with no /data directory (an x86 box with no data partition)
+    keeps it at /var/lib/hasta/apply-pending rather than make /data on its root."""
+    if os.path.isdir(facts_mod._join(root, os.path.dirname(MARKER))):
+        return facts_mod._join(root, MARKER)
+    return facts_mod._join(root, MARKER_NO_DATA)
 
 
 def apply(tree, root="/", receipts_path=None, select=None, platform=None, apps=(),

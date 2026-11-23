@@ -6,6 +6,8 @@ the legacy driver itself applies to the running box only, which is a chroot's or
 business, never a test's.
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -212,3 +214,57 @@ class Fingerprint(unittest.TestCase):
         write(os.path.join(d, "sub", "b.txt"), "b\n")
         write(os.path.join(d, "__pycache__", "x.pyc"), "junk")
         self.assertEqual(apply_mod.fingerprint(d), self.shell(d))
+
+
+class ConvergeCalls(unittest.TestCase):
+    """setup/converge.py applies through `hasta apply`, with converge's own semantics."""
+
+    def run_converge(self, failed):
+        from unittest import mock
+        from setup import converge, detect
+        calls = []
+
+        class R(object):
+            pass
+
+        def fake(tree, root, **kw):
+            calls.append((tree, root, kw))
+            r = R()
+            r.failed = failed
+            return r
+        box = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, box)
+        manifest = os.path.join(box, "modules.txt")
+        open(manifest, "w").close()
+        info = {"is_pi": False, "is_x86": True, "arch": "x86_64"}
+        argv = ["converge.py", "--platform", "x86", "--manifest", manifest]
+        with mock.patch.object(apply_mod, "apply", fake), \
+                mock.patch.object(detect, "detect", lambda: info), \
+                mock.patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = converge.main()   # its plan lines: converge's, unchanged
+        return code, calls, manifest
+
+    def test_every_row_runs_and_a_resume_finishes_only_the_rest(self):
+        code, calls, manifest = self.run_converge([])
+        self.assertEqual(code, 0)
+        (tree, root, kw), = calls
+        self.assertEqual((tree, root), (REPO, "/"))
+        self.assertTrue(kw["force"])
+        self.assertFalse(kw["request"]["force"])
+        self.assertEqual(kw["receipts_path"], manifest)
+        self.assertEqual(kw["platform"], "x86")
+
+    def test_a_failed_module_is_exit_1(self):
+        self.assertEqual(self.run_converge(["rorw"])[0], 1)
+
+    def test_plan_still_runs_from_a_lone_copy(self):
+        # bench/test-rastaos-update copies converge.py alone into a fake checkout
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        os.makedirs(os.path.join(d, "setup"))
+        shutil.copy(os.path.join(REPO, "setup", "converge.py"), os.path.join(d, "setup"))
+        p = subprocess.run([sys.executable, os.path.join(d, "setup", "converge.py"), "--plan",
+                            "--platform", "pi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           env=dict(ENV, PITOOLS_ROOT=d))
+        self.assertEqual(p.returncode, 0, p.stderr)

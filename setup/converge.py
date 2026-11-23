@@ -35,6 +35,10 @@ upgrade script is told `--converging` and must not take its own rw...ro bracket:
 is writable with the rw counter at 0, that bracket's `ro` would remount it read-only under every
 module after it. Run by hand on a rorw box, `rw` first, `ro` after.
 
+Applying is `hasta apply`'s (hasta/apply.py, hasta#t-009): it runs these same rows by these same
+code paths, and leaves one receipt per module under /etc/hasta/receipts/ and, while it runs, a
+resume marker on /data that `hasta apply --resume` finishes at the next boot.
+
 --plan prints one line per module and changes nothing. Exit 0 applied (or nothing to do),
 1 a module failed, 2 usage. PITOOLS_ROOT prefixes every box path it READS (tests, a card in a
 reader); applying always targets the running box.
@@ -153,20 +157,21 @@ def main():
     if a.plan:
         return 0
 
-    os.environ['DEBIAN_FRONTEND'] = 'noninteractive'
-    from setup import installer, config, detect, utils
-    cfg = config.load(detect.find_config(platinfo))
-    mods = modules()
-    failed = []
-    for name, action, _ in rows:
-        if action == 'upgrade':
-            module_dir = os.path.join(PITOOLS_DIR, name)
-            cmd = ['bash', os.path.join(module_dir, upgrade_script(mods[name])), '--converging']
-            if utils.run(cmd, cwd=module_dir, check=False).returncode != 0:
-                failed.append(name)
-        elif action in ('script', 'install') and not installer.install_module(name, platinfo, cfg):
-            failed.append(name)
-    utils.daemon_reload()
+    # The engine applies (hasta#t-009): the same rows by the same code paths — the upgrade script
+    # with --converging, installer.install_module — plus a receipt per module under
+    # /etc/hasta/receipts and a resume marker on /data. force: converge runs every row each
+    # time, as it always did; an interrupted run resumes (`hasta apply --resume`) without it,
+    # so only the modules left without a current receipt run again.
+    from hasta import apply as hasta_apply
+    request = {'tree': PITOOLS_DIR, 'modules': None, 'receipts': a.manifest,
+               'platform': platform, 'apps': [], 'force': False}
+    try:
+        result = hasta_apply.apply(PITOOLS_DIR, '/', receipts_path=a.manifest, platform=platform,
+                                   force=True, request=request)
+    except ValueError as exc:
+        print(f'converge: {exc}', file=sys.stderr)
+        return 2
+    failed = result.failed
     if failed:
         print(f"converge: failed: {' '.join(failed)}", file=sys.stderr)
         return 1
