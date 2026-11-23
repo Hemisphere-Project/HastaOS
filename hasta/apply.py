@@ -12,9 +12,11 @@ is not run again, and its receipt is not rewritten: a second apply changes nothi
 receipts (/etc/pi-tools-modules.txt, /etc/rastaos-release) keep their writers.
 
 Resume: while an apply runs, a marker on the data partition (/data/.hasta-apply; on a box with
-no /data, /var/lib/hasta/apply-pending) names what it was asked to do. It is removed when every module ends applied. `hasta apply --resume` reruns
-what a marker names, and does nothing without one; since every finished module left its
-receipt, the rerun runs only what the interrupted one had not finished.
+no /data, /var/lib/hasta/apply-pending) names what it was asked to do. It is removed when every
+module ends applied; an apply with nothing left to run or record never writes it, so a second
+apply leaves /data untouched. `hasta apply --resume` reruns what a marker names, and does
+nothing without one; since every finished module left its receipt, the rerun runs only what the
+interrupted one had not finished.
 
 The legacy driver applies to the running box only: --root other than / is refused unless a
 runner is given (tests). Standard library only; runs on Python 3.7.
@@ -281,12 +283,20 @@ def apply(tree, root="/", receipts_path=None, select=None, platform=None, apps=(
     marker = marker_path(root)
     runner = runner or LegacyRunner(tree)
 
+    todo = {}   # name -> the receipt this apply would write, for every row with work left
+    for row in p.rows:
+        if row.action in RECEIPTED:
+            new = receipt_for(row.module, row.action)
+            if force or not current(read_receipt(os.path.join(rdir, row.name)), new):
+                todo[row.name] = new
+
     if not dry_run:
         prepare = getattr(runner, "prepare", None)
         if prepare:
             prepare()
-        req = dict(request or {}, started_at=stamp)
-        _write_atomic(marker, json.dumps(req, sort_keys=True) + "\n")
+        if todo:  # nothing left to run or record: no marker, the data partition is not written
+            req = dict(request or {}, started_at=stamp)
+            _write_atomic(marker, json.dumps(req, sort_keys=True) + "\n")
 
     steps, failed = [], []
     for row in p.rows:
@@ -296,8 +306,8 @@ def apply(tree, root="/", receipts_path=None, select=None, platform=None, apps=(
             step["outcome"] = "none"
             continue
         path = os.path.join(rdir, row.name)
-        new = receipt_for(row.module, row.action)
-        if current(read_receipt(path), new) and not force:
+        new = todo.get(row.name)
+        if new is None:
             step["outcome"] = "current"
             continue
         if dry_run:
@@ -319,8 +329,8 @@ def apply(tree, root="/", receipts_path=None, select=None, platform=None, apps=(
         finish = getattr(runner, "finish", None)
         if finish:
             finish()
-        if not failed:
-            os.remove(marker)
+        if not failed and os.path.lexists(marker):
+            os.remove(marker)  # also a marker whose run had finished all but removing it
     return Result(p, steps, failed, resumed)
 
 

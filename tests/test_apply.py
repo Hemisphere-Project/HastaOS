@@ -87,7 +87,10 @@ class Apply(unittest.TestCase):
 
     def snapshot(self):
         out = {}
-        for top, _, files in os.walk(self.box):
+        for top, dirs, files in os.walk(self.box):
+            for name in dirs:  # a marker written then removed still moves its directory
+                p = os.path.join(top, name)
+                out[os.path.relpath(p, self.box) + "/"] = (None, os.stat(p).st_mtime_ns)
             for name in files:
                 p = os.path.join(top, name)
                 with open(p, "rb") as f:
@@ -151,6 +154,15 @@ class Apply(unittest.TestCase):
         r = self.apply(run, resumed=True)
         self.assertEqual(run.ran, [("beta", "upgrade")])                  # only what was left
         self.assertTrue(r.resumed)
+        self.assertIsNone(apply_mod.pending(self.box))
+
+    def test_a_resume_with_nothing_left_still_clears_the_marker(self):
+        self.apply(FakeRunner(self.box))
+        marker = apply_mod.marker_path(self.box)
+        write(marker, '{"tree": "%s"}\n' % self.tree)   # killed after the last receipt
+        run = FakeRunner(self.box)
+        self.apply(run, resumed=True)
+        self.assertEqual(run.ran, [])
         self.assertIsNone(apply_mod.pending(self.box))
 
     def test_a_failed_module_keeps_the_marker_and_no_receipt(self):

@@ -24,6 +24,11 @@
 #   3. ENGINE TESTS — tests/ (unittest, standard library) for the hasta/ engine,
 #      under python3 and, when one is at hand, a 3.7 interpreter (Buster's).
 #
+#   4. APPLY IN A CHROOT — bench/test-apply-chroot: `hasta apply` with the real
+#      installer on a throwaway root, as no root (user namespaces): killed half-way
+#      it resumes, a second apply changes nothing, `check` is clean after. A host
+#      that cannot make the namespace warns and skips it.
+#
 # WHAT A GREEN DOES NOT PROVE — read this before trusting one:
 #
 #   * that any script DOES the right thing. `bash -n` parses; it never runs.
@@ -119,9 +124,20 @@ else
     echo "warn  no python 3.7 at hand — tests ran on python3 only (tests/test_py37.py checks the syntax)"
 fi
 
+# ── layer 4 — apply in a chroot (bench/test-apply-chroot) ──────────
+
+echo
+echo "── apply in a chroot (bench/test-apply-chroot)"
+bash bench/test-apply-chroot >"$pycache/chroot.log" 2>&1
+case $? in
+    0) ok "$(tail -n 1 "$pycache/chroot.log")" ;;
+    2) echo "warn  $(tail -n 1 "$pycache/chroot.log")" ;;
+    *) cat "$pycache/chroot.log"; fail "apply in a chroot: red" ;;
+esac
+
 echo
 if [ "$red" -ne 0 ]; then
     echo "verify: RED"
     exit 1
 fi
-echo "verify: green — syntax, module refs and the engine tests (the header says what that leaves unproven)"
+echo "verify: green — syntax, module refs, the engine tests and apply in a chroot (the header says what that leaves unproven)"

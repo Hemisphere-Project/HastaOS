@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# test-apply-chroot — `hasta apply` with the REAL legacy runner, in a chroot, as no root.
+#
+#   ./bench/test-apply-chroot            (from anywhere inside the checkout; no sudo)
+#
+# The unit tests (tests/test_apply.py) drive apply with a stand-in runner. This drives the
+# real one — setup/installer.py's install_module, setup/utils' link and unit verbs, systemctl —
+# on a throwaway root, inside an unprivileged user + mount namespace (`unshare -r -m`), and
+# proves the row's three claims (HastaOS spec, phase 1, #t-009):
+#
+#   1. an apply killed half-way completes at the next start: the marker survives the kill, the
+#      boot unit that would run `hasta apply --resume` is enabled, and --resume finishes what
+#      the killed run had not, without rerunning what it had;
+#   2. apply twice in a row changes nothing the second time: every file under the root's
+#      writable parts is byte-, link- and mtime-identical across the second apply;
+#   3. `hasta check` is clean after (its own clean: nothing different, nothing undeclared, no
+#      receipt off). It still prints two `problem` lines, both the harness's: hostrename
+#      requires rorw's storage.ro-root, which this set leaves out, and the root has no dpkg
+#      status, so packages are not checked.
+#
+# The root: the host's /usr bound read-only underneath (merged-/usr hosts only), a fresh
+# /usr/local, a small /etc, /boot, /data, and the checkout as it stands (a clone, its
+# uncommitted files laid over) at /opt/HastaOS. Modules: hostrename and starter (standard
+# modules: bins, units, starter's hook — no apt, no network) and `hold`, a stand-in script
+# module added to the clone only, whose install.sh blocks while /tmp/hold-block exists: that is
+# where the first apply is killed.
+#
+# No /proc in the chroot, on purpose: there systemctl says « Running in chroot, ignoring
+# command » and exits 0, as it does in the image bake; with a /proc it would try the host's
+# systemd. The rorw bracket is skipped (HASTA_NO_RORW=1): the chroot's / is not rorw's.
+#
+# Exit 0 green, 1 red, 2 could not run (no user namespaces, not merged-/usr).
+
+set -u
+
+if [ "${1:-}" = "--inside" ]; then
+    ROOT=$2
+    fail() { echo "FAIL: $*"; exit 1; }
+    mount --rbind /dev "$ROOT/dev" || exit 2
+    mount --bind /usr "$ROOT/usr" || exit 2
+    mount -o remount,bind,ro "$ROOT/usr" 2>/dev/null || true
+    mount -t tmpfs tmpfs "$ROOT/usr/local" || exit 2
+    MODS=hostrename,starter,hold
+    in_root() {
+        chroot "$ROOT" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/usr/sbin HOME=/root \
+            HASTA_NO_RORW=1 LANG=C.UTF-8 "$@"
+    }
+    snapshot() {  # every path of the writable parts: type, link target, size, mtime, sha
+        (cd "$ROOT" && find etc usr/local data var root -print0 | sort -z |
+            xargs -0 -I{} sh -c 'p="{}"; printf "%s %s %s %s " "$p" "$(stat -c %F "$p")" \
+                "$(readlink "$p")" "$(stat -c "%s %Y" "$p")"; [ -f "$p" ] && [ ! -L "$p" ] &&
+                sha1sum < "$p" | cut -c1-12 || echo' 2>&1)
+    }
+
+    # 1. killed half-way, resumed at the next start
+    touch "$ROOT/tmp/hold-block"
+    setsid chroot "$ROOT" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/usr/sbin HOME=/root \
+        HASTA_NO_RORW=1 LANG=C.UTF-8 /opt/HastaOS/bin/hasta apply --platform x86 \
+        --modules "$MODS" > "$ROOT/tmp/apply-1.out" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 300); do [ -e "$ROOT/tmp/hold-reached" ] && break; sleep 0.1; done
+    [ -e "$ROOT/tmp/hold-reached" ] || { cat "$ROOT/tmp/apply-1.out"; fail "hold was never reached"; }
+    kill -KILL -- "-$pid"; wait "$pid" 2>/dev/null
+    echo "-- killed in hold's install.sh; receipts then: $(ls "$ROOT/etc/hasta/receipts" 2>/dev/null | tr '\n' ' ')"
+    [ -s "$ROOT/data/.hasta-apply" ] || fail "no marker after the kill"
+    [ -e "$ROOT/etc/hasta/receipts/hold" ] && fail "hold has a receipt it never earned"
+    before=$(ls "$ROOT/etc/hasta/receipts")
+    [ -n "$before" ] || fail "the killed run left no receipt: nothing to prove a resume skips"
+    unit=$(readlink "$ROOT/etc/systemd/system/multi-user.target.wants/hasta-resume.service")
+    [ -n "$unit" ] || fail "the resume unit is not enabled"
+    [ "$(readlink "$ROOT/usr/local/bin/hasta")" = /opt/HastaOS/bin/hasta ] ||
+        fail "/usr/local/bin/hasta does not point into the tree"
+    grep -qx 'ExecStart=/usr/local/bin/hasta apply --resume' \
+        "$ROOT/opt/HastaOS/bin/hasta-resume.service" || fail "the unit does not run --resume"
+    echo "-- marker on /data, resume unit enabled ($unit)"
+
+    rm -f "$ROOT/tmp/hold-block"
+    in_root /usr/local/bin/hasta apply --resume > "$ROOT/tmp/apply-2.out" 2>&1
+    rc=$?; cat "$ROOT/tmp/apply-2.out"
+    [ $rc -eq 0 ] || fail "--resume exited $rc"
+    [ -e "$ROOT/data/.hasta-apply" ] && fail "the marker outlived a complete resume"
+    for m in ${MODS//,/ }; do
+        if echo "$before" | grep -qx "$m"; then
+            grep -Eq "^current +$m " "$ROOT/tmp/apply-2.out" ||
+                fail "--resume reran $m, which the killed run had finished"
+        else
+            grep -Eq "^ran +$m " "$ROOT/tmp/apply-2.out" || fail "--resume did not run $m"
+        fi
+        [ -s "$ROOT/etc/hasta/receipts/$m" ] || fail "no receipt for $m after --resume"
+    done
+    in_root /usr/local/bin/hasta apply --resume | grep -qx 'nothing to resume' ||
+        fail "a second --resume found something to resume"
+
+    # 2. twice in a row changes nothing the second time
+    snapshot > "$ROOT/../snap-1"
+    sleep 1.1   # an mtime a rewrite would move
+    in_root /usr/local/bin/hasta apply --platform x86 --modules "$MODS" > "$ROOT/tmp/apply-3.out" 2>&1
+    rc=$?; tail -1 "$ROOT/tmp/apply-3.out"
+    [ $rc -eq 0 ] || { cat "$ROOT/tmp/apply-3.out"; fail "the second apply exited $rc"; }
+    grep -q ', 0 ran, 3 current, 0 failed' "$ROOT/tmp/apply-3.out" || fail "the second apply ran something"
+    snapshot > "$ROOT/../snap-2"
+    diff "$ROOT/../snap-1" "$ROOT/../snap-2" || fail "the second apply changed the box"
+    echo "-- second apply: $(wc -l < "$ROOT/../snap-1") paths, none changed"
+
+    # 3. check is clean after
+    in_root /usr/local/bin/hasta check --tree /opt/HastaOS > "$ROOT/tmp/check.out" 2>&1
+    rc=$?; tail -3 "$ROOT/tmp/check.out"
+    [ $rc -eq 0 ] || { cat "$ROOT/tmp/check.out"; fail "check exited $rc after apply"; }
+    echo "PASS: killed apply resumed, second apply changed nothing, check clean"
+    exit 0
+fi
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+command -v unshare > /dev/null || { echo "test-apply-chroot: no unshare: not run"; exit 2; }
+unshare -r -m true 2>/dev/null || { echo "test-apply-chroot: no user namespaces: not run"; exit 2; }
+[ -L /bin ] && [ -L /lib ] || { echo "test-apply-chroot: host /usr is not merged: not run"; exit 2; }
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+ROOT=$work/root
+mkdir -p "$ROOT"/{dev,usr,boot,etc/systemd/system,data,var/lib,tmp,root,opt}
+chmod 1777 "$ROOT/tmp"
+for l in bin sbin lib lib64; do [ -e "/$l" ] && ln -s "usr/$l" "$ROOT/$l"; done
+cp /etc/passwd /etc/group "$ROOT/etc/"
+cat /usr/lib/os-release > "$ROOT/etc/os-release"
+echo hasta-chroot > "$ROOT/etc/hostname"
+git clone -q "$here" "$ROOT/opt/HastaOS" || exit 2
+(cd "$here" && git ls-files -z -co --exclude-standard | tar --null -T - --ignore-failed-read -cf - 2>/dev/null) |
+    tar -C "$ROOT/opt/HastaOS" -xf - || exit 2   # the checkout as it stands, not only HEAD
+mkdir "$ROOT/opt/HastaOS/hold"
+cat > "$ROOT/opt/HastaOS/hold/module.ini" <<'EOF'
+[module]
+name = hold
+description = test-apply-chroot stand-in: blocks while /tmp/hold-block exists
+platforms = pi,x86
+
+[install]
+script = yes
+rerun = yes
+EOF
+cat > "$ROOT/opt/HastaOS/hold/install.sh" <<'EOF'
+#!/usr/bin/env bash
+if [ -e /tmp/hold-block ]; then touch /tmp/hold-reached; sleep 600; fi
+exit 0
+EOF
+unshare -r -m --fork bash "$0" --inside "$ROOT"
