@@ -113,7 +113,7 @@ Rules every change to the engine keeps:
 - **Python standard library only, and it runs on Python 3.7** (Rasta's Buster userland) as well as
   on current Debian: no walrus, no `match`, no `dict | dict`, no positional-only markers, no
   `tomllib` without the fallback. `tests/test_py37.py` and the 3.7 run in `bench/verify` hold this.
-- **No module directory moves or is renamed** while Pi-tools keeps merging in.
+- **No module directory moves or is renamed** while Pi-tools keeps merging in (§9).
 - **Only `hasta apply` and `hasta seal` write a box**: apply through the legacy driver's code
   paths and a stack's steps, seal through a stack's seal on a captured image; every other verb
   reads.
@@ -384,3 +384,15 @@ on Buster, a Pi 4 with `/boot/firmware`, an x86 box with an ESP, a Rasta card in
 `tests/fixtures/modules/` (a manifest using every key, and a broken one), and
 `tests/fixtures/receipts/rastaos-7.5.txt` (module receipts as `setup/module-manifest` writes them,
 fingerprinted at the rastaos-7.5 commit `1c927c4`).
+
+## 9. Taking Pi-tools in — `bench/sync-upstream.sh`
+
+HastaOS descends from Pi-tools `2026`, the 7.x line, which keeps getting field fixes; each one
+reaches `main` by a plain merge, never a rebase or a cherry-pick, so the shared history stays one
+history. `bench/sync-upstream.sh` makes that merge on `sync/main-<sha7>`, in a worktree under the
+git dir, cut from `origin/main` (the checkout it runs from is not touched), then runs `bench/verify`
+in the merged tree. A conflict stops it with the files named and the worktree left: resolve there,
+commit, run it again, and it picks up from that commit. Green, it prints the merge and the commands
+that land it; it never pushes. `-n` reports what `main` lacks and what would conflict; `-r
+<slug>#t-NNN` puts the hub row's trailer on the merge. The header gives the rest.
+`tests/test_sync_upstream.py` drives it on three scratch repos.
