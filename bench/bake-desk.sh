@@ -51,6 +51,7 @@ echo 'the mire' > "$T/mire.mp4"
 printf '#\n#  Pi-tools starter configuration\n#\nhostrename@bench-01\n## [hplayer2] multimedia player [profile]\n# hplayer2@looper\nhplayer2@26-anna\nsetnet\n\nhostrename@player-000\nhplayer2@auto\n' > "$B/starter.txt"
 echo '[player]' > "$B/hplayer2.conf"
 echo bench-01 > "$R/etc/hostname"; printf '127.0.0.1\tlocalhost\n127.0.1.1\tbench-01\n' > "$R/etc/hosts"
+printf 'ID=raspbian\nVERSION_ID="10"\nVERSION="10 (buster)"\n' > "$R/etc/os-release"   # the facts' Rasta (hasta seal)
 # the release: a fixture origin with the 7.4 commit and a tagged one after it; the card's checkout on the first
 export GIT_AUTHOR_NAME=desk GIT_AUTHOR_EMAIL=desk@localhost GIT_COMMITTER_NAME=desk GIT_COMMITTER_EMAIL=desk@localhost
 TAG=rastaos-7.5-desk UP=$T/origin
@@ -200,6 +201,15 @@ mv "$T/bootconf.py" "$BC"; cp "$T/starter.baked" "$B/starter.txt"
 
 SEAL=("$BAKE" --only seal --root "$R" --boot "$B" --data "$D")
 chk "seal on the running card refuses (exit 2)" sh -c "'$BAKE' --only seal 2>&1 | grep -q 'never on the running card'; '$BAKE' --only seal >/dev/null 2>&1; [ \$? = 2 ]"
+# since hasta#t-010 the seal is `hasta seal`: refused while `hasta check` on the image is not clean. This
+# desk card is no declared box, so every difference goes in a waive file — after the refusal is seen.
+"${SEAL[@]}" --keys "$T/keys.keep" > "$T/gate.log" 2>&1; rcg=$?
+chk "seal while check is not clean refuses (exit 1)" sh -c "[ $rcg = 1 ] && grep -q '^\[bake\] seal: refused — ' '$T/gate.log'"
+chk "  …and changes nothing" sh -c "cmp -s '$R/root/.ssh/authorized_keys' '$T/ak.before' && [ -f '$D/var/drive-id' -a -f '$D/var/log/blackbox.log' ]"
+python3 "$HERE/bin/hasta" --json seal --root "$R" --boot "$B" --data "$D" --keys "$T/keys.keep" 2>/dev/null \
+  | python3 -c 'import json, sys; [print(k, " # bake-desk: a fixture, not a declared box") for k in sorted(set(d["key"] for d in json.load(sys.stdin)["differences"]))]' > "$T/waive"
+chk "  …and lists each difference by the key a waiver names" [ -s "$T/waive" ]
+SEAL+=(--waive "$T/waive")
 chk "seal with no kept key present fails (exit 1)" sh -c "$(printf '%q ' "${SEAL[@]}") --keys '$T/none.keep' >/dev/null 2>&1; [ \$? = 1 ]"
 chk "  …and changes nothing" sh -c "cmp -s '$R/root/.ssh/authorized_keys' '$T/ak.before' && [ -f '$D/var/drive-id' -a -f '$D/var/log/blackbox.log' ]"
 mv "$R/usr/bin/growpart" "$T/growpart"
@@ -222,6 +232,7 @@ chk "root's bash history gone" [ ! -e "$R/root/.bash_history" ]
 chk "the media untouched by seal" [ "$(ls -A "$D/media")" = 0_mire.mp4 ]
 "${SEAL[@]}" --keys "$T/keys.keep" > "$T/seal2.log" 2>&1
 chk "seal run 2 exits 0, 0 changes" sh -c "[ $? = 0 ] && grep -q 'done — 0 change(s)' '$T/seal2.log'"
+chk "the image records the seal and its waivers" sh -c "grep -qx 'CHECK=waived' '$R/etc/hasta/seal' && cmp -s '$T/waive' '$R/etc/hasta/seal.waived'"
 chk "the repo keep-list is fingerprint lines" sh -c "grep -v '^#' '$HERE/image/authorized-keys.keep' | grep -vqE '^SHA256:[A-Za-z0-9+/]{43} ' && exit 1 || exit 0"
 
 chk "--only rejects an unknown step" sh -c "! '$BAKE' --root '$R' --boot '$B' --only nope >/dev/null 2>&1"

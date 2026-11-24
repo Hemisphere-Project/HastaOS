@@ -1,5 +1,5 @@
-# The Rasta 7.5 overlay (docs/DESIGN.md §2 and §7, schema 1). Data only: image/rastaos-bake still
-# does this work by hand until `hasta apply` takes it over (#t-010). What the stack is, base and
+# The Rasta 7.5 overlay (docs/DESIGN.md §2 and §7, schema 1). Data only: what the bake did by hand
+# is done by steps.py beside it (`hasta apply --stack rasta/7.5`, `hasta seal`, #t-010). What the stack is, base and
 # player build included, is stack.toml beside this file.
 #
 # It declares three things:
@@ -29,8 +29,8 @@ undeclared = [
   "bake `nowde`: /opt/nowde-tools keeps one Nowde firmware (2.0.5 by default)",
   "bake `media`: /data/media holds only 0_mire.mp4, and no /data/hplayer2*.cfg: media policy, for a fleet, not a stack",
   "bake `starter`: <boot>/starter.txt carries `hostrename@player-000` and `hplayer2@auto` (the burn rewrites the name per card), no /boot/hplayer2.conf, /etc/hostname and the 127.0.1.1 line of /etc/hosts = player-000; schema 1 has no starter.txt line form, and the name is identity, for the stamp",
-  "bake `seal` (offline, on the captured image): root's and users' authorized_keys keep only the fingerprints in image/authorized-keys.keep; it refuses without extendfs, its unit, growpart, or a kept root key",
-  "bake `seal`: wires extendfs.service into multi-user.target (extendfs's manifest declares it enabled), drops the drive-id markers (extendfs's seal), empties /data/var/tailscale and /var/lib/tailscale (tailscale's seal), removes /root/.bash_history (rorw's seal truncates its target)",
+  "bake `seal`, now `hasta seal` by steps.py `seal` (offline, on the captured image): root's and users' authorized_keys keep only the fingerprints in image/authorized-keys.keep; it refuses without extendfs, its unit, growpart, or a kept root key",
+  "bake `seal`, now steps.py `seal`: wires extendfs.service into multi-user.target (extendfs's manifest declares it enabled), drops the drive-id markers (extendfs's seal), empties /data/var/tailscale and /var/lib/tailscale (tailscale's seal), removes /root/.bash_history (rorw's seal truncates its target)",
 ]
 
 [module]

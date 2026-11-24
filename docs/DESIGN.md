@@ -114,8 +114,9 @@ Rules every change to the engine keeps:
   on current Debian: no walrus, no `match`, no `dict | dict`, no positional-only markers, no
   `tomllib` without the fallback. `tests/test_py37.py` and the 3.7 run in `bench/verify` hold this.
 - **No module directory moves or is renamed** while Pi-tools keeps merging in.
-- **Only `hasta apply` writes a box**, and only through the legacy driver's code paths; every
-  other verb reads.
+- **Only `hasta apply` and `hasta seal` write a box**: apply through the legacy driver's code
+  paths and a stack's steps, seal through a stack's seal on a captured image; every other verb
+  reads.
 - Names: command `hasta`, package `hasta/`, receipts under `/etc/hasta/`.
 
 ### `hasta facts [--root DIR]`
@@ -272,6 +273,33 @@ object (partitions, `read: mounted|extracted`, notices) in `--json`. The test bu
 image without root (sfdisk on a plain file, `mkfs.vfat --offset` + `mcopy`, `mke2fs -d -E
 offset=`) from the rc box and requires the report `check --root` gives on the same tree. The
 mounted path (run as root) is not exercised by `bench/verify`.
+
+### `hasta seal --root DIR [--boot DIR] [--data DIR] [--keys FILE] [--waive FILE] [--tree DIR] [--receipts FILE] [--app DIR]`
+
+Principle 2, on a captured image (#t-010): the bake's `seal`, after refusing the image while
+`hasta check` on it (against `--tree`) reports anything. Offline only, as the bake's was: it strips
+the rig's key and resets the box at its next boot, so the running box is refused (exit 2). Each
+difference is listed by a **key**, the path `check` names (a receipt's is
+`/etc/pi-tools-modules.txt <module>`). There is no silent override: `--waive FILE` names each
+accepted difference by its key, one per line, ` # why` after it; a waiver that matches no
+difference is refused too. A box whose release is a git checkout (`/opt/Pi-tools`) is refused the
+same way until its tree is clean and committed: each path `git status` lists is one more
+difference. What check reports on every captured image and the stack's seal sets right itself
+(the stack's `SEAL_SETS`: Rasta's bench card keeps extendfs unwired, the seal wires it) needs no
+waiver.
+
+The reset is the box's stack's (the facts' stack): Rasta 7.5's is `seal(c)` in
+`stacks/rasta/7.5/steps.py`, the bake's step ported — every refusal before any write (no data
+partition, no extendfs, its unit or growpart, no keep-list, no kept root key), then
+authorized_keys keep only `image/authorized-keys.keep`'s fingerprints (`--keys`), the drive-id
+markers go, extendfs is wired, the tailnet state and the logs are emptied, root's history goes.
+The manifests' `[[seal]]` entries say the same in data; the engine does not run them yet.
+`/etc/hasta/seal` then records `STACK`, `ENGINE` (the tree, `git describe --dirty`), `CHECK`
+(`clean` or `waived`), `WAIVED` and `SEALED_AT`, and `/etc/hasta/seal.waived` holds the waive file
+as given; both are rewritten only when what they say changes, so a second seal changes nothing.
+`image/rastaos-bake --only seal [--waive FILE]` runs it. Exit 0 sealed, 1 refused (nothing
+changed), 2 usage. `tests/test_seal.py`: on the same baked card, with every difference waived, the
+tree the reference bake's seal leaves, plus the record.
 
 ## 7. The manifest — `module.toml`, schema 1
 

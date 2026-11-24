@@ -15,8 +15,8 @@
 # Run it from a Pi-tools tree at the release (a /tmp clone or bundle on the card), not from the
 # card's own /opt/Pi-tools: 7.4's checkout has no image/ and no setup/rastaos-update.
 # Since hasta#t-010 the steps stamps to starter are the engine's, as the Rasta 7.5 stack's steps
-# (stacks/rasta/7.5/steps.py, `hasta apply --stack rasta/7.5`): this script runs each one through it
-# and keeps converge, hplayer2 and seal. What each step does is unchanged, and still told here.
+# (stacks/rasta/7.5/steps.py, `hasta apply --stack rasta/7.5`): this script runs each one through it,
+# seal through `hasta seal`, and keeps converge and hplayer2. What each step does is still told here.
 # Steps (pi-tools#t-058). The image keeps three partitions; flightbox's p4 is laid out per card at the
 # burn, at the card's tail: `bench/burn-batch --flightbox` (image/flightbox-p4), see flightbox/README.md.
 #   converge /opt/Pi-tools → the release tag, via THIS tree's setup/rastaos-update (receipt
@@ -64,6 +64,9 @@
 #            `auto` (it predates hplayer2#t-101): a starter naming a profile the player lacks plays nothing.
 #   seal     NOT in the default run: `--only seal`, offline, on the captured image (or the card in a reader)
 #            between the dd and the burn — never on the running card, whose rig access it would strip.
+#            Since hasta#t-010 it is `hasta seal`: refused while `hasta check` on the image is not clean,
+#            or while its /opt/Pi-tools has uncommitted work; --waive FILE names each accepted
+#            difference (its key, one per line) and the image records the file in /etc/hasta/.
 #            Arms extendfs's first-boot reset: drops the drive-id markers, so every card burned from the
 #            image takes the clone path (new machine-id + SSH host keys, Tailscale wiped) even when its
 #            fingerprint falls back to a UUID a dd copy shares (pi-tools#t-006, AUDIT-2026), and wires
@@ -80,7 +83,7 @@
 # Exit 0 done (or nothing to do), 1 a step failed, 2 usage / not a RastaOS root.
 set -uo pipefail
 
-ROOT=/ BOOT="" DATA="" ONLY="" LIVE=0 TAG="" BUNDLE="" HPBUNDLE="" NOWDE=2.0.5 MIRE="" KEYS="" CHECKOUT=/opt/Pi-tools
+ROOT=/ BOOT="" DATA="" ONLY="" LIVE=0 TAG="" BUNDLE="" HPBUNDLE="" NOWDE=2.0.5 MIRE="" KEYS="" WAIVE="" CHECKOUT=/opt/Pi-tools
 STEPS="converge hplayer2 stamps version units rtc turbo apfix dns wifi nowde media starter"
 EXPLICIT="seal"   # runs only when --only names it
 HPLAYER=/opt/HPlayer2
@@ -106,6 +109,7 @@ while [ $# -gt 0 ]; do
     --data) DATA=${2:?--data DIR}; shift 2 ;;
     --mire) MIRE=$(readlink -f "${2:?--mire FILE}"); shift 2 ;;
     --keys) KEYS=$(readlink -f "${2:?--keys FILE}"); shift 2 ;;
+    --waive) WAIVE=$(readlink -f "${2:?--waive FILE}"); shift 2 ;;
     --list) for s in $STEPS $EXPLICIT; do echo "$s"; done; exit 0 ;;
     -h|--help) usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
@@ -207,58 +211,18 @@ step_stack() {
   [ "$rc" = 0 ]
 }
 
+# seal: the engine's since hasta#t-010 (`hasta seal`): the same reset, by the Rasta 7.5 stack's
+# `seal` (stacks/rasta/7.5/steps.py), after refusing the image while `hasta check` is not clean.
+# --waive FILE names each accepted difference; the sealed image records it (/etc/hasta/seal.waived).
 step_seal() {
-  local S unit w keep f line fp out tmp files=() n_root=0 drops=() d m
-  S=$(r /etc/systemd/system); keep=${KEYS:-$HERE/authorized-keys.keep}
-  lnk() { [ -e "$1" ] || [ -L "$1" ]; }    # an absolute link dangles outside the target root
-  # --- every refusal before any write
-  [ -d "$DATA/var" ] || { say "seal: no $DATA/var — pass --data <the image's p3, mounted>; nothing changed"; return 1; }
-  lnk "$(r /usr/local/bin/extendfs)" || { say "seal: extendfs is not installed (./setup.sh extendfs) — nothing changed"; return 1; }
-  unit=/etc/systemd/system/extendfs.service; lnk "$(r $unit)" || unit=/lib/systemd/system/extendfs.service
-  lnk "$(r $unit)" || { say "seal: no extendfs.service unit — nothing changed"; return 1; }
-  [ -x "$(r /usr/bin/growpart)" ] || { say "seal: no growpart (cloud-guest-utils): extendfs would stop before the identity reset — nothing changed"; return 1; }
-  [ -s "$keep" ] || { say "seal: no keep-list $keep (--keys FILE) — nothing changed"; return 1; }
-  for f in "$(r /root/.ssh/authorized_keys)" "$(r /root/.ssh/authorized_keys2)" "$(r /home)"/*/.ssh/authorized_keys "$(r /home)"/*/.ssh/authorized_keys2; do
-    [ -f "$f" ] && files+=("$f")
-  done
-  local K; K=$(mktemp -d)
-  for f in "${files[@]}"; do
-    : > "$K/$(echo "$f" | md5sum | cut -c1-8)"
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in ''|'#'*) printf '%s\n' "$line" >> "$K/$(echo "$f" | md5sum | cut -c1-8)"; continue ;; esac
-      printf '%s\n' "$line" > "$K/one"
-      out=$(ssh-keygen -lf "$K/one" 2>/dev/null | head -1); fp=$(echo "$out" | awk '{print $2}')
-      if [ -n "$fp" ] && awk -v fp="$fp" '$1 == fp { f = 1 } END { exit !f }' "$keep"; then
-        printf '%s\n' "$line" >> "$K/$(echo "$f" | md5sum | cut -c1-8)"
-        case "$f" in "$(r /root/.ssh)"/*) n_root=$((n_root + 1)) ;; esac
-      else
-        drops+=("${f#"${ROOT%/}"}: ${out:-unparsable line}")
-      fi
-    done < "$f"
-  done
-  if [ "$n_root" = 0 ]; then
-    rm -rf "$K"; say "seal: no key of $keep in root's authorized_keys — the image would lock root out; nothing changed"; return 1
-  fi
-  # --- writes
-  for f in "${files[@]}"; do
-    tmp=$K/$(echo "$f" | md5sum | cut -c1-8)
-    cmp -s "$f" "$tmp" || cat "$tmp" > "$f"
-  done
-  rm -rf "$K"
-  for d in "${drops[@]}"; do did "seal: key dropped — $d"; done
-  for m in "$DATA/var/drive-id" "$DATA/var/drive-id-stage1"; do
-    [ -e "$m" ] && { rm -f "$m"; did "seal: extendfs marker ${m##*/} removed (first boot of every burned card = clone path)"; }
-  done
-  if [ -z "$(find "$S" -path "$S/*.wants/extendfs.service" 2>/dev/null | head -1)" ]; then
-    mkdir -p "$S/multi-user.target.wants"; ln -sfn "$unit" "$S/multi-user.target.wants/extendfs.service"
-    did "seal: extendfs.service wired to multi-user.target"
-  fi
-  for d in "$DATA/var/tailscale" "$(r /var/lib/tailscale)" "$DATA/var/log" "$(r /var/log/journal)"; do
-    [ -d "$d" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ] || continue
-    find "$d" -mindepth 1 -delete && did "seal: ${d#"${ROOT%/}"} emptied"
-  done
-  f=$(r /root/.bash_history); [ -e "$f" ] && { rm -f "$f"; did "seal: root's .bash_history removed"; }
-  return 0
+  local out rc n
+  out=$(python3 "$HASTA" seal --root "$ROOT" --boot "$BOOT" --data "$DATA" ${KEYS:+--keys "$KEYS"} \
+        ${WAIVE:+--waive "$WAIVE"} 2>&1); rc=$?
+  printf '%s\n' "$out" | sed -n 's/^step       /[bake] /p'
+  printf '%s\n' "$out" | grep -v '^step \|^seal       ' | sed 's/^/[bake] /'
+  n=$(printf '%s\n' "$out" | sed -n 's/^seal       [^ ]*: \([0-9]*\) change(s).*/\1/p')
+  CHANGED=$((CHANGED + ${n:-0}))
+  [ "$rc" = 0 ]
 }
 
 # ---------------------------------------------------------------- run

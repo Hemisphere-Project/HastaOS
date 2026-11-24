@@ -12,6 +12,7 @@ from hasta import check as check_mod
 from hasta import facts as facts_mod
 from hasta import manifest
 from hasta import plan as plan_mod
+from hasta import seal as seal_mod
 from hasta import stack as stack_mod
 
 # The HastaOS checkout this engine runs from: the tree `hasta modules` reads by default.
@@ -339,6 +340,41 @@ def cmd_check(args):
     return 0 if r.clean else 1
 
 
+def cmd_seal(args):
+    tree = os.path.abspath(args.tree)
+    echo = None if args.json else (lambda m: print("step       " + m))
+    if echo:
+        print("seal       %s, against %s" % (args.root, tree))
+    try:
+        r = seal_mod.run(tree, args.root, boot=args.boot, data=args.data, keys=args.keys,
+                         waive=args.waive, receipts_path=args.receipts, apps=args.app or (),
+                         platform=args.platform, out=echo)
+    except ValueError as exc:
+        print("hasta seal: %s" % exc, file=sys.stderr)
+        return 2
+    lines = []
+    for d in r.sets:
+        lines.append("seal sets  %s" % d.line())
+    for d in r.differences:
+        lines.append("%-10s %s" % ("waived" if d.waived is not None else "refused", d.line()))
+    for w in r.unused:
+        lines.append("unused     %s: names no difference" % w)
+    for prob in r.problems:
+        lines.append("problem    %s" % prob)
+    if r.refused:
+        lines.append("seal: refused — %s; nothing changed. Fix the box, or name each accepted"
+                     " difference in a --waive FILE: its key (the path above), one per line,"
+                     " ` # why` after it; the image records the file" % r.refused)
+    elif r.failed:
+        lines.append("seal: the stack's seal (%s) refused; nothing changed" % r.stack)
+    else:
+        lines.append("seal       %s: %d change(s)%s" % (r.stack, len(r.changes),
+                     ", %d waived" % sum(1 for d in r.differences if d.waived) if
+                     r.differences else ""))
+    _emit(args, r.as_dict(), lines)
+    return 1 if (r.refused or r.failed) else 0
+
+
 def parser():
     p = argparse.ArgumentParser(
         prog="hasta", description="Hasta: one engine, one module contract (docs/DESIGN.md).")
@@ -442,6 +478,31 @@ def parser():
     sp.add_argument("--platform", choices=("pi", "x86"),
                     help="override the platform the facts give")
     sp.set_defaults(func=cmd_check)
+
+    sp = add("seal", "reset a captured image's clone-bound state (identity markers, keys, logs)"
+             " by its stack's seal, after refusing it while `check` is not clean; the running"
+             " box is refused")
+    sp.add_argument("--root", required=True, metavar="DIR",
+                    help="the image's root partition, mounted")
+    sp.add_argument("--boot", metavar="DIR",
+                    help="its boot partition, where it is not ROOT/boot")
+    sp.add_argument("--data", metavar="DIR",
+                    help="its data partition, where it is not ROOT/data")
+    sp.add_argument("--keys", metavar="FILE",
+                    help="the fingerprints authorized_keys keep (default: the tree's"
+                    " image/authorized-keys.keep)")
+    sp.add_argument("--waive", metavar="FILE",
+                    help="each accepted difference by its key, one per line; recorded in the"
+                    " image (/etc/hasta/seal.waived)")
+    sp.add_argument("--tree", default=TREE, metavar="DIR",
+                    help="the module tree that declares (default: this checkout)")
+    sp.add_argument("--receipts", metavar="FILE",
+                    help="the module receipts (default: ROOT/etc/pi-tools-modules.txt)")
+    sp.add_argument("--app", action="append", metavar="DIR",
+                    help="an app tree carrying its own manifest (repeatable)")
+    sp.add_argument("--platform", choices=("pi", "x86"),
+                    help="override the platform the facts give")
+    sp.set_defaults(func=cmd_seal)
     return p
 
 

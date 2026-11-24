@@ -7,10 +7,13 @@ names: what schema 1 cannot say yet. The declared part (the masks, the lines, th
 `hasta check` holds the result to.
 
 Not here: `converge` and `hplayer2` move the checkouts to a release tag (rastaos-update's and the
-app's); `seal` is `hasta seal`'s. Read by hasta/stack.py, which gives each step a context `c`:
-c.r(path) the path inside the target root, c.boot / c.data the boot and data partitions, c.live,
-c.rev the recipe's sha, c.opts (nowde, mire), c.did(msg) for a change, c.say(msg) for the rest.
-A step returns False when it failed.
+app's). The bake's `seal` is here, as `seal(c)` below, but it is no step: `hasta seal` runs it on
+the captured image, once `check` is clean (hasta/seal.py).
+
+Read by hasta/stack.py, which gives each step a context `c`: c.r(path) the path inside the target
+root, c.boot / c.data the boot and data partitions, c.live, c.rev the recipe's sha, c.opts (nowde,
+mire; keys for the seal), c.did(msg) for a change, c.say(msg) for the rest. A step returns False
+when it failed.
 
 Standard library only; runs on Python 3.7.
 """
@@ -21,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 
 STEPS = ("stamps", "version", "units", "rtc", "turbo", "apfix", "dns", "wifi", "nowde",
@@ -360,3 +364,146 @@ def _readlink(path):
 
 def today():
     return time.strftime("%Y-%m-%d")
+
+
+# ---------------------------------------------------------------- the seal
+
+KEEP_LIST = "image/authorized-keys.keep"   # in the HastaOS tree; c.opts["keys"] overrides it
+SEAL_EMPTIES = ("/data/var/tailscale", "/var/lib/tailscale", "/data/var/log", "/var/log/journal")
+# What `check` reports on every captured image and this seal itself sets right: box path → the
+# start of the difference's words. The bench card keeps extendfs unwired (it must not reset
+# itself); the seal wires it, as extendfs's manifest declares. `hasta seal` does not ask a waiver
+# for these.
+SEAL_SETS = {"/etc/systemd/system/extendfs.service": "not enabled under multi-user.target"}
+
+
+def _lnk(p):
+    """The bake's `[ -e ] || [ -L ]`: an absolute link dangles outside the target root."""
+    return os.path.lexists(p)
+
+
+def _box(c, box_path):
+    """A box path where the seal reads it: /data/… on the data partition, the rest in the root."""
+    if box_path == "/data" or box_path.startswith("/data/"):
+        return os.path.join(c.data, box_path[len("/data"):].lstrip("/"))
+    return c.r(box_path)
+
+
+def _fingerprint(line, scratch):
+    """`ssh-keygen -lf` on one authorized_keys line: (its first output line, the fingerprint)."""
+    with open(scratch, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(line + "\n")
+    try:
+        p = subprocess.run(["ssh-keygen", "-lf", scratch], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL)
+    except OSError:
+        return "", ""
+    out = (p.stdout.decode("utf-8", "replace").split("\n") or [""])[0]
+    fields = out.split()
+    return out, (fields[1] if len(fields) > 1 else "")
+
+
+def seal(c):
+    """The bake's `seal`, run by `hasta seal` once `check` let it (never a STEPS entry: it runs
+    offline, on the captured image). Arms extendfs's first-boot reset, keeps in every
+    authorized_keys only the keep-list's fingerprints, empties the bench's tailnet state and logs.
+    Every refusal comes before any write. False when it refused."""
+    S = c.r(UNIT_DIR)
+    keep = c.opts.get("keys") or os.path.join(HERE, "..", "..", "..", KEEP_LIST)
+    # --- every refusal before any write
+    if not os.path.isdir(os.path.join(c.data, "var")):
+        c.say("seal: no %s/var — pass --data <the image's p3, mounted>; nothing changed" % c.data)
+        return False
+    if not _lnk(c.r("/usr/local/bin/extendfs")):
+        c.say("seal: extendfs is not installed (./setup.sh extendfs) — nothing changed")
+        return False
+    unit = UNIT_DIR + "/extendfs.service"
+    if not _lnk(c.r(unit)):
+        unit = "/lib/systemd/system/extendfs.service"
+    if not _lnk(c.r(unit)):
+        c.say("seal: no extendfs.service unit — nothing changed")
+        return False
+    if not os.access(c.r("/usr/bin/growpart"), os.X_OK):
+        c.say("seal: no growpart (cloud-guest-utils): extendfs would stop before the identity"
+              " reset — nothing changed")
+        return False
+    if not (os.path.isfile(keep) and os.path.getsize(keep) > 0):
+        c.say("seal: no keep-list %s (--keys FILE) — nothing changed" % keep)
+        return False
+    kept_fps = set()
+    for ln in _lines(_read(keep)):
+        f = ln.split()
+        if f:
+            kept_fps.add(f[0])
+    home = glob.escape(c.r("/home"))
+    files = [p for p in [c.r("/root/.ssh/authorized_keys"), c.r("/root/.ssh/authorized_keys2")]
+             + sorted(glob.glob(os.path.join(home, "*", ".ssh", "authorized_keys")))
+             + sorted(glob.glob(os.path.join(home, "*", ".ssh", "authorized_keys2")))
+             if os.path.isfile(p)]
+    root_ssh = c.r("/root/.ssh") + os.sep
+    want, drops, n_root = {}, [], 0
+    scratch_dir = tempfile.mkdtemp(prefix="hasta-seal-")
+    try:
+        scratch = os.path.join(scratch_dir, "one")
+        for f in files:
+            out = []
+            for line in _lines(_read(f)):
+                if line == "" or line.startswith("#"):
+                    out.append(line)
+                    continue
+                said, fp = _fingerprint(line, scratch)
+                if fp and fp in kept_fps:
+                    out.append(line)
+                    if f.startswith(root_ssh):
+                        n_root += 1
+                else:
+                    drops.append("%s: %s" % (c.show(f), said or "unparsable line"))
+            want[f] = "".join(ln + "\n" for ln in out)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+    if n_root == 0:
+        c.say("seal: no key of %s in root's authorized_keys — the image would lock root out;"
+              " nothing changed" % keep)
+        return False
+    # --- writes
+    for f in files:
+        if _read(f) != want[f]:
+            _write(f, want[f])
+    for d in drops:
+        c.did("seal: key dropped — " + d)
+    for name in ("drive-id", "drive-id-stage1"):
+        m = os.path.join(c.data, "var", name)
+        if os.path.exists(m):
+            os.remove(m)
+            c.did("seal: extendfs marker %s removed (first boot of every burned card = clone path)"
+                  % name)
+    wired = False
+    for top, dirs, names in os.walk(S):
+        if top != S and top.endswith(".wants") and "extendfs.service" in dirs + names:
+            wired = True
+            break
+    if not wired:
+        w = os.path.join(S, "multi-user.target.wants")
+        os.makedirs(w, exist_ok=True)
+        p = os.path.join(w, "extendfs.service")
+        if os.path.lexists(p):
+            os.remove(p)
+        os.symlink(unit, p)
+        c.did("seal: extendfs.service wired to multi-user.target")
+    for box_path in SEAL_EMPTIES:
+        d = _box(c, box_path)
+        # a link is not followed: an absolute one dangles outside the target root
+        if os.path.islink(d) or not os.path.isdir(d) or not os.listdir(d):
+            continue
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+        c.did("seal: %s emptied" % box_path)
+    f = c.r("/root/.bash_history")
+    if os.path.exists(f):
+        os.remove(f)
+        c.did("seal: root's .bash_history removed")
+    return True
